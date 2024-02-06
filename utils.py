@@ -5,6 +5,10 @@ import random
 from importlib import import_module
 
 import numpy as np
+import scipy.stats as st
+import matplotlib
+matplotlib.use('Agg')
+from matplotlib import pyplot as plt
 import torch
 from torch import nn
 from torch.nn.modules.utils import _triple
@@ -52,6 +56,7 @@ def shape2size(shape):
 # Returns padding size corresponding to padding "same" for a given kernel size
 def get_padding_same(kernel_size):
 	kernel_size = _triple(kernel_size)
+	#if any(k % 2 == 0 for k in kernel_size): raise ValueError("Padding same mode only available for odd-sized kernels, but found {}".format(kernel_size))
 	return [(k - 1) // 2 for k in kernel_size]
 	#return 'same'
 
@@ -64,6 +69,47 @@ def update_csv(results, path):
 			writer.writerow([name + '_epoch'] + list(entries.keys()))
 			writer.writerow([name] + list(entries.values()))
 
+# Add an entry containing the seed of a training iteration and the test accuracy of the corresponding model to a csv file
+def update_iter_csv(iter_id, result, path, ci_levels=(0.9, 0.95, 0.98, 0.99, 0.995)):
+	AVG_KEY = 'AVG'
+	CI_KEYS = {ci_lvl: str(ci_lvl*100) + "% CI" for ci_lvl in ci_levels}
+	HEADER = ('ITER_ID', 'RESULT')
+	d = {}
+	try:
+		with open(path, 'r') as csv_file:
+			reader = csv.reader(csv_file)
+			d = dict(reader)
+			d.pop(HEADER[0], None)
+			d.pop(AVG_KEY, None)
+			for ci_lvl in ci_levels: d.pop(CI_KEYS[ci_lvl], None)
+	except: pass
+	d[str(iter_id)] = str(result)
+	with open(path, mode='w', newline='') as csv_file:
+		writer = csv.writer(csv_file)
+		writer.writerow(HEADER)
+		for k, v in d.items(): writer.writerow([k, v])
+		if len(d) > 1:
+			values = list(map(float, d.values()))
+			avg = sum(values)/len(values)
+			se = st.sem(values)
+			writer.writerow([AVG_KEY, str(avg)])
+			for ci_lvl in ci_levels:
+				ci = st.t.interval(ci_lvl, len(values) - 1, loc=avg, scale=se)
+				ci_str = "+/- " + str((ci[1] - ci[0])/2)
+				writer.writerow([CI_KEYS[ci_lvl], ci_str])
+
+# Save a figure showing train and validation results in the specified file
+def save_trn_curve_plot(train_result_data, val_result_data, path, label='result'):
+	graph = plt.axes(xlabel='epoch', ylabel=label)
+	graph.plot(list(train_result_data.keys()), list(train_result_data.values()), label='train')
+	graph.plot(list(val_result_data.keys()), list(val_result_data.values()), label='val.')
+	graph.grid(True)
+	graph.legend()
+	os.makedirs(os.path.dirname(path), exist_ok=True)
+	fig = graph.get_figure()
+	fig.savefig(path, bbox_inches='tight')
+	plt.close(fig)
+
 # Save state dictionary file to specified path
 def save_dict(state_dict, path):
 	os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -72,7 +118,11 @@ def save_dict(state_dict, path):
 # Load state dictionary file from specified path
 def load_dict(path, device='cpu'):
 	return torch.load(path, map_location=device)
-	
+
+# Remaps tensors in state dict to the desired dtype
+def map_dtype(state_dict, dtype=torch.float):
+	return {k: map_dtype(v, dtype) if isinstance(v, dict) else v.to(dtype=dtype) if isinstance(v, torch.Tensor) else v for k, v in state_dict.items()}
+
 # Retrieve a custom module or object provided by the user by full name in dot notation as string. If the object is a
 # dictionary, it is possible to retrieve a specific element of the dictionary with the square bracket indexing notation.
 # NB: dictionary keys must always be strings.

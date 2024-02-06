@@ -117,7 +117,7 @@ class TubeViTModel(nn.Module):
         return [1 + (self.video_shape[i] - offset[i] - kernel_size[i]) // stride[i] for i in range(len(self.video_shape))]
 
     def _generate_position_embedding(self):
-        position_embedding = [torch.zeros(1, self.embed_dim)]
+        position_embedding = [torch.zeros(1, self.embed_dim).float()]
 
         for i in range(len(self.kernel_sizes)):
             tube_shape = self._calc_conv_shape(self.kernel_sizes[i], self.strides[i], self.offsets[i])
@@ -210,11 +210,11 @@ def get_3d_sincos_pos_embed(embed_dim, tube_shape, stride, offset, kernel_size):
 
     # spatial
     grid_h_size = tube_shape[1]
-    grid_h = torch.arange(grid_h_size, dtype=torch.get_default_dtype())
+    grid_h = torch.arange(grid_h_size).float()
     grid_h = grid_h * stride[1] + offset[1] + (kernel_size[1] - 1) // 2
 
     grid_w_size = tube_shape[2]
-    grid_w = torch.arange(tube_shape[2], dtype=torch.get_default_dtype())
+    grid_w = torch.arange(tube_shape[2]).float()
     grid_w = grid_w * stride[2] + offset[2] + (kernel_size[2] - 1) // 2
 
     grid = torch.meshgrid(grid_w, grid_h, indexing="ij")
@@ -227,7 +227,7 @@ def get_3d_sincos_pos_embed(embed_dim, tube_shape, stride, offset, kernel_size):
 
     # temporal
     t_size = tube_shape[0]
-    grid_t = torch.arange(t_size, dtype=torch.get_default_dtype())
+    grid_t = torch.arange(t_size).float()
     grid_t = grid_t * stride[0] + offset[0] + (kernel_size[0] - 1) // 2
     pos_embed_temporal = get_1d_sincos_pos_embed_from_grid(embed_dim_temporal, grid_t)
 
@@ -240,7 +240,7 @@ def get_3d_sincos_pos_embed(embed_dim, tube_shape, stride, offset, kernel_size):
     return pos_embed
 
 def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
-    omega = torch.arange(embed_dim // 2, dtype=torch.get_default_dtype())
+    omega = torch.arange(embed_dim // 2).float()
     omega /= embed_dim / 2.0
     omega = 1.0 / 10000**omega
 

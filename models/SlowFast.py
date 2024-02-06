@@ -5,7 +5,9 @@ import torch.nn as nn
 class SlowFast(nn.Module):
     def __init__(self, config, num_classes):
         super().__init__()
-        self.model = SlowFastModel(num_classes=num_classes)
+        blocks = config.get('layer_sizes', (2, 2, 2, 2))
+        blocks = [0, 0] + list(blocks)
+        self.model = SlowFastModel(num_classes=num_classes, blocks=blocks)
 
     def forward(self, x):
         return self.model(x)
@@ -20,7 +22,7 @@ blocks = (0, 0, 2, 2, 2, 2)
 
 
 class SlowFastModel(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, blocks=blocks):
         super(SlowFastModel, self).__init__()
         self.stage1 = SlowFastConv()
         self.stage1_fuse = Fuse(dim_out[1] // beta_inv)

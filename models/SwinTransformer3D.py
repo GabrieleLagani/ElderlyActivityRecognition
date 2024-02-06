@@ -283,9 +283,9 @@ def bound_window_shape(input_shape, window_shape, shift_shape=None):
 
 # Computes an attention mask that assigns a low attention score (-100) to elements that appear to be neighboring after
 # a roll operation, but are in fact far apart, hence attentional aggregation should be prevented.
-def compute_mask(input_shape, window_shape, shift_shape, device):
+def compute_mask(input_shape, window_shape, shift_shape, device, dtype):
     T, H, W = input_shape
-    img_mask = torch.zeros((1, T, H, W, 1), device=device)
+    img_mask = torch.zeros((1, T, H, W, 1), device=device, dtype=dtype)
     cnt = 0
     for t in slice(-window_shape[0]), slice(-window_shape[0], -shift_shape[0]), slice(-shift_shape[0], None):
         for h in slice(-window_shape[1]), slice(-window_shape[1], -shift_shape[1]), slice(-shift_shape[1], None):
@@ -408,7 +408,7 @@ class SwinTransformer3DStage(nn.Module):
         input_shape = [T, H, W]
         window_size, shift_size = bound_window_shape(input_shape, self.window_size, self.shift_size)
         padded_input_shape = [input_shape[i] + (-input_shape[i] % window_size[i]) for i in range(len(input_shape))]
-        attn_mask = compute_mask(padded_input_shape, window_size, shift_size, x.device)
+        attn_mask = compute_mask(padded_input_shape, window_size, shift_size, x.device, x.dtype)
 
         for block in self.blocks:
             x = block(x, attn_mask)

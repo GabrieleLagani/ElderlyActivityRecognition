@@ -169,7 +169,7 @@ class CA3D(nn.Module):
 		if x.shape[2] != self.clip_len or x.shape[3] != self.img_size or x.shape[4] != self.img_size:
 			raise RuntimeError("Input dimension ({}) does not match expected size ({})".format(x.shape, (self.clip_len, self.img_size, self.img_size)))
 		x = self.forward_features(x)
-		x = self.clf(x.view(x.shape[0], -1))
+		x = self.clf(x.reshape(x.shape[0], -1))
 		return x
 
 	def get_train_params(self):
