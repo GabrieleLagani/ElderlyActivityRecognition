@@ -10,7 +10,7 @@ class CA3D(nn.Module):
 		super().__init__()
 
 		clip_len = config.get('clip_len', 32)
-		img_size = config.get('crop_size', 112)
+		img_size = config.get('input_size', 112)
 		fmap_size = config.get('fmap_size', (1, 1))
 		patch_size = config.get('patch_size', 3)
 		layer_sizes = config.get('layer_sizes', ((64, 4, 2), (64, 8, 2)))
@@ -167,7 +167,7 @@ class CA3D(nn.Module):
 
 	def forward(self, x):
 		if x.shape[2] != self.clip_len or x.shape[3] != self.img_size or x.shape[4] != self.img_size:
-			raise RuntimeError("Input dimension ({}) does not match expected size ({})".format(x.shape, (self.clip_len, self.img_size, self.img_size)))
+			raise RuntimeError("Input dimension ({}) does not match expected size ({})".format(x.shape[2:], (self.clip_len, self.img_size, self.img_size)))
 		x = self.forward_features(x)
 		x = self.clf(x.reshape(x.shape[0], -1))
 		return x

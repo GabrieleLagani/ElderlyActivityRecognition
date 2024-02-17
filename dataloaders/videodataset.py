@@ -21,30 +21,30 @@ import utils
 # This function takes a number of parameters related to video frame resizing, resampling, clipping, and produces a string
 # representation of the overall operation, which is useful for saving/retrieving files related to a particular type of clipping
 def clip_str_repr(clip_size=112, clip_len=16, clip_location='start', clip_step=1, min_clip_step=None, max_clip_step=None, auto_len=None, min_auto_len=None, max_auto_len=None):
-	s = 's{}_l{}-{}_{}'.format(clip_size, clip_location, clip_len,
-	          'x{}'.format(clip_len) if isinstance(clip_len, int) else (
-	          'x{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step) if clip_step == 'rand' else (
-		      'x{}-{}-{}_f{}'.format(clip_step, min_clip_step, max_clip_step, auto_len) if clip_step == 'auto' else (
-	          'x{}-{}-{}_f{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step, auto_len, min_auto_len, max_auto_len))))
+	s = 's-{}_l-{}-{}_{}'.format(clip_size, clip_location, clip_len,
+	          'x-{}'.format(clip_len) if isinstance(clip_len, int) else (
+	          'x-{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step) if clip_step == 'rand' else (
+		      'x-{}-{}-{}_f-{}'.format(clip_step, min_clip_step, max_clip_step, auto_len) if clip_step == 'auto' else (
+	          'x-{}-{}-{}_f-{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step, auto_len, min_auto_len, max_auto_len))))
         )
 	#return s
 
 	s = ''
-	if clip_size is not None: s += 's{}_'.format(clip_size)
-	if clip_len is not None: s += 'l{}-{}_'.format(clip_location, clip_len)
+	if clip_size is not None: s += 's-{}_'.format(clip_size)
+	if clip_len is not None: s += 'l-{}-{}_'.format(clip_location, clip_len)
 	if clip_step != 1:
 		if isinstance(clip_step, int):
-			s += 'x{}'.format(clip_step)
+			s += 'x-{}'.format(clip_step)
 		else:
 			if clip_len == 'rand':
-				s += 'x{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step)
+				s += 'x-{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step)
 			elif clip_step == 'auto':
 				if auto_len is not None or clip_len is not None:
-					s += 'x{}-{}-{}_f{}'.format(clip_step, min_clip_step if min_clip_step is not None else 1, max_clip_step if max_clip_step is not None else 'max', auto_len if auto_len is not None else clip_len)
+					s += 'x-{}-{}-{}_f{}'.format(clip_step, min_clip_step if min_clip_step is not None else 1, max_clip_step if max_clip_step is not None else 'max', auto_len if auto_len is not None else clip_len)
 				elif min_clip_step is not None and min_clip_step != 1:
-					s += 'x{}'.format(min_clip_step)
+					s += 'x-{}'.format(min_clip_step)
 			else:
-				s += 'x{}-{}-{}_f{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step, auto_len, min_auto_len, max_auto_len)
+				s += 'x-{}-{}-{}_f{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step, auto_len, min_auto_len, max_auto_len)
 	if s.endswith('_'): s = s[:-1]
 	return s
 
@@ -58,7 +58,7 @@ class KineticsDownloader(Kinetics):
 		self.num_classes = num_classes
 		self.root = os.path.join(root, split)
 		self.split = split
-		self.split_folder = os.path.join(self.root, self.split)
+		self.split_folder = os.path.join(self.root, self.split) # Split folders are for example kinetics400/train/train
 		self.num_download_workers = 1 # More than one gives a bug
 
 	def download_if_needed(self):
@@ -67,8 +67,8 @@ class KineticsDownloader(Kinetics):
 
 
 class VideoDatasetFolder(Dataset):
-	def __init__(self, data_folder='datasets/ucf101', frame_resize=None, frame_resample=1,
-	             min_frame_resample=None, max_frame_resample=None, auto_resampled_num_frames=80,
+	def __init__(self, data_folder='datasets/ucf101', target_data_folder=None, frame_resize=None, frame_resample=1,
+	             min_frame_resample=None, max_frame_resample=None, auto_resample_num_frames=80,
 	             frames_per_clip=16, clip_location='start', space_between_frames=1,
 	             min_space_between_frames=None, max_space_between_frames=None,
 	             auto_frames=None, min_auto_frames=None, max_auto_frames=None,
@@ -76,10 +76,12 @@ class VideoDatasetFolder(Dataset):
 		self.data_folder = data_folder
 		self.frame_resize = frame_resize
 		self.frame_resample = frame_resample
-		self.auto_resampled_num_frames = auto_resampled_num_frames
+		self.auto_resample_num_frames = auto_resample_num_frames
 		self.min_frame_resample = min_frame_resample
 		self.max_frame_resample = max_frame_resample
-		self.resized_data_folder = self.data_folder if self.frame_resize is None and self.frame_resample == 1 else self.data_folder + '_' + clip_str_repr(clip_size=self.frame_resize, clip_len=None, clip_location=None, clip_step=self.frame_resample, min_clip_step=self.min_frame_resample, max_clip_step=self.max_frame_resample, auto_len=self.auto_resampled_num_frames)
+		self.target_data_folder = self.data_folder if self.frame_resize is None and self.frame_resample == 1 else target_data_folder
+		if self.frame_resize is None and self.frame_resample == 1 and self.target_data_folder is None:
+			raise ValueError("A target data folder must be provided when frame resizing or resampling is required, found 'None'")
 		self.frames_per_clip = frames_per_clip
 		self.clip_location = clip_location # Possible values: 'start', 'center', 'random', or integer
 		if self.clip_location not in ['start', 'center', 'random'] and not isinstance(self.clip_location, int):
@@ -97,7 +99,7 @@ class VideoDatasetFolder(Dataset):
 		self.transform = transform
 		self.stop_on_invalid_frames = stop_on_invalid_frames
 		self.default_shape = default_shape
-		DATA_DESCRIPTOR_FILE = os.path.join(self.resized_data_folder.replace(P.DATASET_FOLDER, P.ASSETS_FOLDER), 'data_desc.pt')
+		DATA_DESCRIPTOR_FILE = os.path.join(self.data_folder.replace(P.DATASET_FOLDER, P.ASSETS_FOLDER), 'datadesc_{}.pt'.format(clip_str_repr(clip_size=self.frame_resize, clip_len=None, clip_location=None, clip_step=self.frame_resample, min_clip_step=self.min_frame_resample, max_clip_step=self.max_frame_resample, auto_len=self.auto_resample_num_frames)))
 
 		data_dict = None
 		try: # Try to load dataset information from file
@@ -113,7 +115,7 @@ class VideoDatasetFolder(Dataset):
 					path = os.path.join(self.data_folder, action_name, file_name)
 					file_ok, frame_count, fps = self.check_integrity(path)
 					if file_ok:
-						file_names.append(path.replace(self.data_folder, self.resized_data_folder))
+						file_names.append(os.path.join(action_name, file_name))
 						frame_counts.append(frame_count)
 						fps_counts.append(fps)
 						labels.append(i)
@@ -143,17 +145,17 @@ class VideoDatasetFolder(Dataset):
 		# time-consuming, becoming a performance bottleneck during training. So, using resized videos gives a great
 		# performance improvement.
 		if file_ok and (self.frame_resize is not None or self.frame_resample != 1):
-			os.makedirs(os.path.dirname(path.replace(self.data_folder, self.resized_data_folder)), exist_ok=True)
+			os.makedirs(os.path.dirname(path.replace(self.data_folder, self.target_data_folder)), exist_ok=True)
 			resized_height = int(self.frame_resize * frame_height / min(frame_height, frame_width)) if self.frame_resize is not None else frame_height
 			resized_width = int(self.frame_resize * frame_width / min(frame_height, frame_width)) if self.frame_resize is not None else frame_width
 			step = self.frame_resample
 			if step == 'auto':
-				step = max(frame_count // self.auto_resampled_num_frames, 1)
+				step = max(frame_count // self.auto_resample_num_frames, 1)
 				if self.min_frame_resample is not None:
 					step = max(step, self.min_frame_resample)
 				if self.max_frame_resample is not None:
 					step = min(step, self.max_frame_resample)
-			out = cv2.VideoWriter(path.replace(self.data_folder, self.resized_data_folder), cv2.VideoWriter_fourcc(*'mp4v'), fps, (resized_width, resized_height), True)
+			out = cv2.VideoWriter(path.replace(self.data_folder, self.target_data_folder), cv2.VideoWriter_fourcc(*'mp4v'), fps, (resized_width, resized_height), True)
 			i, in_count, out_count = 0, 0, 0
 			while i < frame_count:
 				retaining, frame = capture.read()
@@ -211,7 +213,7 @@ class VideoDatasetFolder(Dataset):
 		return torch.tensor(frames, device='cpu', dtype=torch.uint8).permute(0, 3, 1, 2)
 
 	def __getitem__(self, index):
-		file_path = self.file_names[index]
+		file_path = os.path.join(self.target_data_folder, self.file_names[index])
 
 		# Read video and label for the element at the specified index
 		frame_count, fps = self.frame_counts[index], self.fps_counts[index]
@@ -374,9 +376,10 @@ class VideoDataManager:
 	def acquire_dataset_metadata(self):
 		self.dataset_name = self.get_dataset_name()
 		self.data_folder = os.path.join(P.DATASET_FOLDER, self.dataset_name)
-		dataset = VideoDatasetFolder(self.data_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
+		self.target_data_folder = self.data_folder if self.frame_resize is None and self.frame_resample == 1 else self.data_folder + '_' + clip_str_repr(clip_size=self.frame_resize, clip_len=None, clip_location=None, clip_step=self.frame_resample, min_clip_step=self.min_frame_resample, max_clip_step=self.max_frame_resample, auto_len=self.auto_resample_num_frames)
+		dataset = VideoDatasetFolder(self.data_folder, self.target_data_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
 		                             min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample,
-		                             auto_resampled_num_frames=self.auto_resample_num_frames, stop_on_invalid_frames=self.stop_on_invalid_frames)
+		                             auto_resample_num_frames=self.auto_resample_num_frames, stop_on_invalid_frames=self.stop_on_invalid_frames)
 		self.dataset_size = len(dataset)
 		self.input_channels = dataset[0][0].shape[1]
 		self.num_classes = len(dataset.classes)
@@ -398,12 +401,12 @@ class VideoDataManager:
 	                  min_space_between_frames=None, max_space_between_frames=None,
 	                  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
 	                  transform=None):
-		split = VideoDatasetFolder(self.data_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
-		    min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resampled_num_frames=self.auto_resample_num_frames,
-			frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
-			min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
-		    auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
-			transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+		split = VideoDatasetFolder(self.data_folder, self.target_data_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
+		                           min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+		                           frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+		                           min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+		                           auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+		                           transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
 		split = Subset(split, self.trn_idx)
 		return split
 
@@ -411,12 +414,12 @@ class VideoDataManager:
 	                  min_space_between_frames=None, max_space_between_frames=None,
 	                  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
 	                  transform=None):
-		split = VideoDatasetFolder(self.data_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
-		    min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resampled_num_frames=self.auto_resample_num_frames,
-			frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
-			min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
-		    auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
-			transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+		split = VideoDatasetFolder(self.data_folder, self.target_data_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
+		                           min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+		                           frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+		                           min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+		                           auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+		                           transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
 		split = Subset(split, self.val_idx)
 		return split
 
@@ -424,12 +427,12 @@ class VideoDataManager:
 	                  min_space_between_frames=None, max_space_between_frames=None,
 	                  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
 	                  transform=None):
-		split = VideoDatasetFolder(self.data_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
-		    min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resampled_num_frames=self.auto_resample_num_frames,
-			frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
-			min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
-		    auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
-			transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+		split = VideoDatasetFolder(self.data_folder, self.target_data_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
+		                           min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+		                           frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+		                           min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+		                           auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+		                           transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
 		split = Subset(split, self.tst_idx)
 		return split
 
@@ -447,7 +450,7 @@ class VideoDataManager:
 		return self.tst_set
 
 	def get_stats(self):
-		STATS_FILE = os.path.join(P.ASSETS_FOLDER, self.dataset_name, 'stats_seed{}_{}.pt'.format(self.dataseed, clip_str_repr(clip_size=self.input_size, clip_len=self.eval_clip_len, clip_location=self.eval_clip_location, clip_step=self.eval_clip_step, min_clip_step=self.eval_min_clip_step, max_clip_step=self.eval_max_clip_step, auto_len=self.eval_auto_len, min_auto_len=self.eval_min_auto_len, max_auto_len=self.eval_max_auto_len)))
+		STATS_FILE = os.path.join(P.ASSETS_FOLDER, self.dataset_name, 'stats_seed-{}_{}.pt'.format(self.dataseed, clip_str_repr(clip_size=self.input_size, clip_len=self.eval_clip_len, clip_location=self.eval_clip_location, clip_step=self.eval_clip_step, min_clip_step=self.eval_min_clip_step, max_clip_step=self.eval_max_clip_step, auto_len=self.eval_auto_len, min_auto_len=self.eval_min_auto_len, max_auto_len=self.eval_max_auto_len)))
 		stats_dict = None
 		try:  # Try to load stats from file
 			stats_dict = utils.load_dict(STATS_FILE)
@@ -493,6 +496,7 @@ class KineticsDataManager(VideoDataManager):
 	def acquire_dataset_metadata(self):
 		self.dataset_name = self.get_dataset_name()
 		self.data_folder = os.path.join(P.DATASET_FOLDER, self.dataset_name)
+		self.target_data_folder = self.data_folder if self.frame_resize is None and self.frame_resample == 1 else self.data_folder + '_' + clip_str_repr(clip_size=self.frame_resize, clip_len=None, clip_location=None, clip_step=self.frame_resample, min_clip_step=self.min_frame_resample, max_clip_step=self.max_frame_resample, auto_len=self.auto_resample_num_frames)
 		trn_split, val_split, tst_split = self.get_trn_split(), self.get_val_split(), self.get_tst_split()
 		self.dataset_size = len(trn_split) + len(val_split) + len(tst_split)
 		self.input_channels = trn_split[0][0].shape[1]
@@ -506,13 +510,13 @@ class KineticsDataManager(VideoDataManager):
 	                  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
 	                  transform=None):
 		KineticsDownloader(self.data_folder, num_classes=self.dataset_version, split='train').download_if_needed()
-		trn_folder = os.path.join(self.data_folder, 'train', 'train')
-		split = VideoDatasetFolder(trn_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
-		    min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resampled_num_frames=self.auto_resample_num_frames,
-			frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
-			min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
-		    auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
-			transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+		trn_folder, target_trn_folder = os.path.join(self.data_folder, 'train', 'train'), os.path.join(self.target_data_folder, 'train')
+		split = VideoDatasetFolder(trn_folder, target_trn_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
+		                           min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+		                           frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+		                           min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+		                           auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+		                           transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
 		return split
 
 	def get_val_split(self, frames_per_clip=16, clip_location='start', space_between_frames=1,
@@ -520,13 +524,13 @@ class KineticsDataManager(VideoDataManager):
 	                  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
 	                  transform=None):
 		KineticsDownloader(self.data_folder, num_classes=self.dataset_version, split='val').download_if_needed()
-		val_folder = os.path.join(self.data_folder, 'val', 'val')
-		split = VideoDatasetFolder(val_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
-		    min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resampled_num_frames=self.auto_resample_num_frames,
-			frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
-			min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
-		    auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
-			transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+		val_folder, target_val_folder = os.path.join(self.data_folder, 'val', 'val'), os.path.join(self.target_data_folder, 'val')
+		split = VideoDatasetFolder(val_folder, target_val_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
+		                           min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+		                           frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+		                           min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+		                           auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+		                           transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
 		return split
 
 	def get_tst_split(self, frames_per_clip=16, clip_location='start', space_between_frames=1,
@@ -534,13 +538,13 @@ class KineticsDataManager(VideoDataManager):
 	                  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
 	                  transform=None):
 		KineticsDownloader(self.data_folder, num_classes=self.dataset_version, split='test').download_if_needed()
-		tst_folder = os.path.join(self.data_folder, 'test', 'test')
-		split = VideoDatasetFolder(tst_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
-		    min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resampled_num_frames=self.auto_resample_num_frames,
-			frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
-			min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
-		    auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
-			transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+		tst_folder, target_tst_folder = os.path.join(self.data_folder, 'test', 'test'), os.path.join(self.target_data_folder, 'test')
+		split = VideoDatasetFolder(tst_folder, target_tst_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
+		                           min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+		                           frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+		                           min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+		                           auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+		                           transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
 		return split
 
 # Custom object to obtain data augmentation transformations

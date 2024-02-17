@@ -117,7 +117,7 @@ for d, p in [(d, p) for d in datasets for p in precisions]:
 		#'epochs': 100, 'sched_decay': 0.1, 'sched_milestones': [40, 70, 90],
 	}
 	
-	# 85.66M params | f16 3101MB, 2m 38s epoch, 82% ucf | f32 5021MB, 5m 22s epoch, 85% ucf
+	# 85.66M params | f16 3101MB, 2m 38s epoch, 82% ucf | f32 5021MB, 5m 22s epoch, 85% ucf, 22.1% kinetics
 	tubevit[p + '_' + d] = {
 	    'data_manager': datasets[d],
 		'augment_manager': 'dataloaders.videodataset.LightAugmentManager',
@@ -230,7 +230,7 @@ for d, p in [(d, p) for d in datasets for p in precisions]:
 		#'epochs': 100, 'sched_decay': 0.1, 'sched_milestones': [40, 70, 90],
 	}
 
-	# 118.86M params | f16 6509MB, 4m 22s epoch, 73% ucf | 11759MB, 12m 17s epoch, 85% ucf
+	# 118.86M params | f16 6509MB, 4m 22s epoch, 73% ucf | f32 11759MB, 12m 17s epoch, 85% ucf, 29.71% kinetics
 	stam[p + '_' + d] = {
 	    'data_manager': datasets[d],
 		'augment_manager': 'dataloaders.videodataset.LightAugmentManager',
@@ -355,7 +355,7 @@ for d, p in [(d, p) for d in datasets for p in precisions]:
 		#'epochs': 100, 'sched_decay': 0.1, 'sched_milestones': [40, 70, 90],
 	}
 
-	# 14.63M params | f16 1811MB, 1m 37s epoch, 90% ucf| f32 2235MB, 1m 54s epoch, 92% ucf
+	# 14.63M params | f16 1811MB, 1m 37s epoch, 90% ucf, 40% kinetics | f32 2235MB, 1m 54s epoch, 92% ucf
 	slowfast[p + '_' + d] = {
 	    'data_manager': datasets[d],
 		'augment_manager': 'dataloaders.videodataset.LightAugmentManager',
