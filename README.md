@@ -8,8 +8,8 @@ home and smart healthcare applications.
 ## Models
 This repository provides implementations of various deep learning models for 
 video processing. In particular, we also provide the code for our 
-Convolutional-Attentional 3D (CA3D) model (also known as CAST3D - 
-Convolutional-Attentional Spatio Temporal 3D model).
+Convolutional-Attentional 3D (CA3D) model (based on the CAST - 
+Convolutional-Attentional Spatio Temporal block).
 Code for training and evaluating the models on various datasets is available.
 
 ## Usage
