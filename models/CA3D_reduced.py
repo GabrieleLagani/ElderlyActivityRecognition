@@ -14,9 +14,9 @@ class CA3D(nn.Module):
 		fmap_size = config.get('fmap_size', (1, 1))
 		patch_size = config.get('patch_size', 3)
 		layer_sizes = config.get('layer_sizes', ((64, 4, 2), (64, 8, 2)))
-		conv_order = config.get('conv_order', 'NCANP')
-		res_order = config.get('res_order', 'CANCANS')
-		att_order = config.get('att_order', 'NASNP')
+		conv_order = config.get('conv_order', 'NCNAP')
+		res_order = config.get('res_order', 'CNACNSA')
+		att_order = config.get('att_order', 'NASNBPS')
 		r_k = config.get('res_kernel_size', 3)
 		rec_col = config.get('rec_col', False)
 		shared_map = config.get('shared_map', False)
@@ -24,11 +24,11 @@ class CA3D(nn.Module):
 		act = utils.retrieve(config.get('act', 'torch.nn.ReLU'))()
 		norm = utils.retrieve(config.get('norm', 'models.modutils.BatchNorm'))
 		attn_norm = utils.retrieve(config.get('attn_norm', config.get('norm', 'models.modutils.BatchNorm')))
-		downsample = config.get('downsample', (1, 2, 1, 2, 1, 1))
+		downsample = config.get('downsample', (1, 2, 2, 2, 1, 3))
 		t_aggr = config.get('t_aggr', 'conv')
 		t_att = config.get('t_att', 'once')
 		init_mode = config.get('init_mode', 'kaiming_normal')
-		pos_emb_mode = config.get('pos_emb_mode', 'once')
+		pos_emb_mode = config.get('pos_emb_mode', 'repeat')
 		pos_drop = config.get('pos_drop', 0.)
 		final_drop = config.get('final_drop', 0.)
 		disable_wd_for_pos_emb = config.get('disable_wd_for_pos_emb', False)
@@ -102,7 +102,7 @@ class CA3D(nn.Module):
 						conv=make_conv_layer(config, out_channels, out_channels, heads, out_channels, kernel_size=r_k, stride=1, padding='same'),
 						act=act, norm=norm, order=res_order), depth=depth, recurrent=rec_col),
 		            act=act, norm=norm, order=conv_order))
-				clip_len = utils.get_conv_output_size(clip_len, k_t, s_t, padding='same')
+				clip_len = clip_len // s_t
 			else:
 				self.layer_list.append(CBlock(in_channels, out_channels, heads,
 					conv=make_conv_layer(config, in_channels, out_channels, heads, in_channels, kernel_size=(1, 3, 3), stride=(1, s, s), padding='same', token_dim=(3, 4)),
@@ -110,7 +110,7 @@ class CA3D(nn.Module):
 						conv=make_conv_layer(config, out_channels, out_channels, heads, out_channels, kernel_size=(1, r_k, r_k), stride=1, padding='same', token_dim=(3, 4)),
 						act=act, norm=norm, order=res_order), depth=depth, recurrent=rec_col),
 		            act=act, norm=norm, order=conv_order))
-			img_size = utils.get_conv_output_size(img_size, 3, s, padding='same')
+			img_size = img_size // s
 			#in_channels = out_channels
 			in_channels = out_embed_dim
 			heads = out_heads
@@ -123,7 +123,7 @@ class CA3D(nn.Module):
 					conv=make_conv_layer(config, in_channels, in_channels, heads, in_channels, kernel_size=(k_t, 1, 1), stride=(s_t, 1, 1), padding='same', token_dim=(2)),
 					proj=Column(MultiHeadResBlock(in_channels, heads,
 						conv=make_conv_layer(config, in_channels, in_channels, heads, in_channels, kernel_size=(r_k, 1, 1), stride=1, padding='same', token_dim=(2)),
-						act=act, norm=norm, order=res_order), depth=0, recurrent=rec_col),
+						act=act, norm=norm, order=res_order), depth=depth, recurrent=rec_col),
 		            act=act, norm=norm, order=conv_order))
 				clip_len = utils.get_conv_output_size(clip_len, k_t, s_t, padding='same')
 			if t_aggr == 'pool':
@@ -155,7 +155,7 @@ class CA3D(nn.Module):
 					conv=make_conv_layer(config, in_channels, in_channels, heads, in_channels, kernel_size=(k_t, 1, 1), stride=(s_t, 1, 1), padding='same', token_dim=(2)),
 					proj=Column(MultiHeadResBlock(in_channels, heads,
 						conv=make_conv_layer(config, in_channels, in_channels, heads, in_channels, kernel_size=(r_k, 1, 1), stride=1, padding='same', token_dim=(2)),
-						act=act, norm=norm, order=res_order), depth=0, recurrent=rec_col),
+						act=act, norm=norm, order=res_order), depth=depth, recurrent=rec_col),
 					act=act, norm=norm, order=conv_order))
 				clip_len = utils.get_conv_output_size(clip_len, k_t, s_t, padding='same')
 			if t_aggr == 'pool_post':

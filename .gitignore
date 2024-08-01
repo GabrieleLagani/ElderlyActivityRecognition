@@ -105,3 +105,10 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+/datasets/
+/results/
+/assets/
+/perf.data
+/debug/
+/tboard/

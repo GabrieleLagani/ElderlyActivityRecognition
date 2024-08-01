@@ -15,9 +15,10 @@ def channel_split(x, splits):
 
 def qkv_aggregate(q, k, v):
 	scale = v.shape[-1] ** -0.5
-	attn = (q @ k.transpose(-2, -1)) * scale
+	attn = (q*scale) @ (k.transpose(-2, -1)*scale)
 	attn = attn.softmax(dim=-1)
-	return (attn @ v)
+	res = (attn @ v)
+	return res
 
 def linear_qkv_aggregate(q, k, v, eps=1e-5):
 	d = q @ (k.transpose(-2, -1).sum(dim=-1, keepdim=True))
@@ -296,7 +297,7 @@ class PosEmbedding(nn.Module):
 
 	def init_filters(self):
 		num_banks = 1 if self.shared_map else self.heads
-		pos_embed = nn.init.zeros_(torch.empty((num_banks * self.channels, self.size)))
+		pos_embed = nn.init.xavier_normal_(torch.empty((num_banks * self.channels, self.size)))
 		self.pos_embed = nn.Parameter(pos_embed, requires_grad=True)
 
 	def new(self):
@@ -329,7 +330,7 @@ class PosEmbedding(nn.Module):
 class MultiplicativePosEmbedding(PosEmbedding):
 	def __init__(self, size, channels=64, heads=8, shared_map=False, token_dim=None, transposed=False, cape_reg=0):
 		super().__init__(size, channels, heads, shared_map=shared_map, token_dim=token_dim, transposed=transposed, cape_reg=cape_reg)
-		self.w_pos_embed = nn.Parameter(torch.ones_like(self.pos_embed), requires_grad=True)
+		self.w_pos_embed = nn.Parameter(1 + nn.init.xavier_normal_(torch.empty_like(self.pos_embed)), requires_grad=True)
 
 	def new(self):
 		return MultiplicativePosEmbedding(self.size, self.heads, self.channels, shared_map=self.shared_map, token_dim=self.token_dim, transposed=self.transposed)
@@ -453,7 +454,7 @@ class KernelAttention(Attention):
 	def aggregate(self, qkv):
 		q, k, v = qkv
 		scale = q.shape[-1] ** -0.5
-		q, k = q * (scale**0.5), k * (scale**0.5)
+		q, k = q * scale, k * scale
 		hq, hk = gauss(q) / (self.knl_size**0.5), gauss(k) / (self.knl_size**0.5)
 		return linear_qkv_aggregate(hq * torch.exp(q.matmul(self.r.t())), hk * torch.exp(k.matmul(self.r.t())), v)
 
@@ -774,7 +775,7 @@ class CBlock(nn.Module):
 		self.conv = conv if conv is not None else MultiHeadConv3d(self.in_channels * self.heads, sum(self.splits) // self.heads)
 		self.proj = proj if proj is not None else Column(MultiHeadResBlock(self.out_channels, self.heads))
 		self.act = act
-		self.norm1 = norm((self.in_channels if order.upper().startswith('N') else self.out_channels) * self.heads)
+		self.norm1 = norm((self.in_channels if any([order.upper().startswith(s) for s in ['N', 'AN']]) else self.out_channels) * self.heads)
 		self.norm2 = norm(self.out_channels * self.heads)
 		self.order = order.upper()
 		for op in self.order:
@@ -855,7 +856,7 @@ class Column(nn.Module):
 			self.layer_list.append(self.block if l == 0 or self.recurrent else self.block.new())
 
 	def new(self):
-		return Column(self.tblock.new(), depth=self.depth, recurrent=self.recurrent)
+		return Column(self.block.new(), depth=self.depth, recurrent=self.recurrent)
 
 	def forward(self, x):
 		for l in self.layer_list:

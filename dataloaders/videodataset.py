@@ -1,4 +1,5 @@
 import os
+import subprocess
 import random
 from tqdm import tqdm
 import warnings
@@ -10,7 +11,6 @@ from torch.utils.data import DataLoader, Dataset, Subset
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
 from torchvision.datasets import Kinetics
-from torchvision.io import read_video
 import numpy as np
 import cv2
 
@@ -18,36 +18,72 @@ import params as P
 import utils
 
 
+# Resample frames in [T, C, H, W]-shaped tensor with a desired step. Possible add jittering, i.e. randomly perturbe the
+# subsampling steps
+def frame_subsample(x, step=1, jitter=None):
+	if jitter is None: return x[::step]
+	frame_count = x.shape[0]
+	out_count = frame_count // step + (1 if frame_count % step > 0 else 0)
+	idx = torch.randint(0, int(jitter*step), [out_count], device=x.device, dtype=torch.int) + step * torch.arange(0, out_count, device=x.device, dtype=torch.int)
+	return x[idx[idx < frame_count]]
+
+# Extract a temporal crop from a video clip at a given temporal offset.
+def temporal_crop(x, idx, num_time_crops=None):
+	if num_time_crops == 1 or num_time_crops is None: return x
+	target_len = 2 * (x.shape[1] // (num_time_crops + 1))
+	t_stride = (x.shape[1] - target_len) // (num_time_crops - 1)
+	return x[:, idx*t_stride:idx*t_stride + target_len]
+
+# Extract a spatial crop from a video clip at a given horizontal or vertical offset, depending if the largest dimension
+# is horizontal or vertical, respectively.
+def spatial_crop(x, idx, num_space_crops=None):
+	if num_space_crops == 1 or num_space_crops is None: return x
+	target_size = min(x.shape[2], x.shape[3])
+	v_stride = (x.shape[2] - target_size) // (num_space_crops - 1)
+	h_stride = (x.shape[3] - target_size) // (num_space_crops - 1)
+	return x[:, :, idx*v_stride:idx*v_stride + target_size, idx*h_stride:idx*h_stride + target_size]
+
+# computes necessary clip length to read from video in order to extract a desired number of clips for multicrop testing
+def clip_len_for_multicrop(clip_len, num_crops):
+	return (num_crops + 1) * (clip_len // 2)
+
 # This function takes a number of parameters related to video frame resizing, resampling, clipping, and produces a string
 # representation of the overall operation, which is useful for saving/retrieving files related to a particular type of clipping
-def clip_str_repr(clip_size=112, clip_len=16, clip_location='start', clip_step=1, min_clip_step=None, max_clip_step=None, auto_len=None, min_auto_len=None, max_auto_len=None):
-	s = 's-{}_l-{}-{}_{}'.format(clip_size, clip_location, clip_len,
-	          'x-{}'.format(clip_len) if isinstance(clip_len, int) else (
-	          'x-{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step) if clip_step == 'rand' else (
-		      'x-{}-{}-{}_f-{}'.format(clip_step, min_clip_step, max_clip_step, auto_len) if clip_step == 'auto' else (
-	          'x-{}-{}-{}_f-{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step, auto_len, min_auto_len, max_auto_len))))
-        )
+def clip_str_repr(clip_size=112, clip_len=16, clip_location='start', clip_step=1, min_clip_step=None, max_clip_step=None, auto_len=None, min_auto_len=None, max_auto_len=None, frame_jitter=None):
+	s = '_s-{}_l-{}-{}_{}{}'.format(clip_size, clip_location, clip_len,
+			  'x-{}'.format(clip_step) if isinstance(clip_step, int) else (
+			  'x-{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step) if clip_step == 'rand' else (
+			  'x-{}-{}-{}_f-{}'.format(clip_step, min_clip_step, max_clip_step, auto_len) if clip_step == 'auto' else (
+			  'x-{}-{}-{}_f-{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step, auto_len, min_auto_len, max_auto_len)))),
+			  '_j-{}'.format(frame_jitter) if frame_jitter is not None else ''
+		)
 	#return s
 
 	s = ''
-	if clip_size is not None: s += 's-{}_'.format(clip_size)
-	if clip_len is not None: s += 'l-{}-{}_'.format(clip_location, clip_len)
+	if clip_size is not None: s += '_s-{}'.format(clip_size)
+	if clip_len is not None: s += '_l-{}-{}'.format(clip_location, clip_len)
 	if clip_step != 1:
 		if isinstance(clip_step, int):
-			s += 'x-{}'.format(clip_step)
+			s += '_x-{}'.format(clip_step)
 		else:
 			if clip_len == 'rand':
-				s += 'x-{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step)
+				s += '_x-{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step)
 			elif clip_step == 'auto':
 				if auto_len is not None or clip_len is not None:
-					s += 'x-{}-{}-{}_f{}'.format(clip_step, min_clip_step if min_clip_step is not None else 1, max_clip_step if max_clip_step is not None else 'max', auto_len if auto_len is not None else clip_len)
+					s += '_x-{}-{}-{}_f{}'.format(clip_step, min_clip_step if min_clip_step is not None else 1, max_clip_step if max_clip_step is not None else 'max', auto_len if auto_len is not None else clip_len)
 				elif min_clip_step is not None and min_clip_step != 1:
-					s += 'x-{}'.format(min_clip_step)
+					s += '_x-{}'.format(min_clip_step)
 			else:
-				s += 'x-{}-{}-{}_f{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step, auto_len, min_auto_len, max_auto_len)
-	if s.endswith('_'): s = s[:-1]
+				s += '_x-{}-{}-{}_f{}-{}-{}'.format(clip_step, min_clip_step, max_clip_step, auto_len, min_auto_len, max_auto_len)
+	if frame_jitter is not None: s += '_j-{}'.format(frame_jitter)
 	return s
 
+def backend_str_repr(backend):
+	backends = ['default', 'opencv', 'pyav', 'ffmpeg-python', 'ffmpeg', 'img']
+	if backend.lower() not in backends:
+		raise ValueError("Video backend should be one of {}, found {}".format(backends, backend))
+	backend_str = {'ffmpeg-python': '_be-ffmpeg', 'ffmpeg': '_be-ffmpeg', 'img': '_be-img'}
+	return backend_str.get(backend.lower(), '')
 
 class KineticsDownloader(Kinetics):
 	valid_classes = ['400', '600', '700']
@@ -68,20 +104,24 @@ class KineticsDownloader(Kinetics):
 
 class VideoDatasetFolder(Dataset):
 	def __init__(self, data_folder='datasets/ucf101', target_data_folder=None, frame_resize=None, frame_resample=1,
-	             min_frame_resample=None, max_frame_resample=None, auto_resample_num_frames=80,
-	             frames_per_clip=16, clip_location='start', space_between_frames=1,
-	             min_space_between_frames=None, max_space_between_frames=None,
-	             auto_frames=None, min_auto_frames=None, max_auto_frames=None,
-	             transform=None, stop_on_invalid_frames=True, default_shape=None):
+				 min_frame_resample=None, max_frame_resample=None, auto_resample_num_frames=80, frame_jitter=None, backend='opencv',
+				 frames_per_clip=16, clip_location='start', space_between_frames=1,
+				 min_space_between_frames=None, max_space_between_frames=None,
+				 auto_frames=None, min_auto_frames=None, max_auto_frames=None,
+				 clips_per_video=1, crops_per_video=1, transform=None, stop_on_invalid_frames=False, default_shape=None):
 		self.data_folder = data_folder
 		self.frame_resize = frame_resize
 		self.frame_resample = frame_resample
-		self.auto_resample_num_frames = auto_resample_num_frames
 		self.min_frame_resample = min_frame_resample
 		self.max_frame_resample = max_frame_resample
-		self.target_data_folder = self.data_folder if self.frame_resize is None and self.frame_resample == 1 else target_data_folder
-		if self.frame_resize is None and self.frame_resample == 1 and self.target_data_folder is None:
-			raise ValueError("A target data folder must be provided when frame resizing or resampling is required, found 'None'")
+		self.auto_resample_num_frames = auto_resample_num_frames
+		self.frame_jitter = frame_jitter
+		self.backend = backend
+		self.resaving = backend_str_repr(self.backend) != '' or self.frame_resize is not None or self.frame_resample > 1
+		self.target_data_folder = self.data_folder if not self.resaving else target_data_folder
+		if self.resaving and self.target_data_folder is None:
+			raise ValueError("A target data folder must be provided when video resaving is required, found 'None'")
+		self.resaving = self.resaving and not os.path.exists(self.target_data_folder)
 		self.frames_per_clip = frames_per_clip
 		self.clip_location = clip_location # Possible values: 'start', 'center', 'random', or integer
 		if self.clip_location not in ['start', 'center', 'random'] and not isinstance(self.clip_location, int):
@@ -96,10 +136,12 @@ class VideoDatasetFolder(Dataset):
 		self.auto_frames = auto_frames
 		self.min_auto_frames = min_auto_frames
 		self.max_auto_frames = max_auto_frames
+		self.clips_per_video = clips_per_video
+		self.crops_per_video = crops_per_video
 		self.transform = transform
 		self.stop_on_invalid_frames = stop_on_invalid_frames
 		self.default_shape = default_shape
-		DATA_DESCRIPTOR_FILE = os.path.join(self.data_folder.replace(P.DATASET_FOLDER, P.ASSETS_FOLDER), 'datadesc_{}.pt'.format(clip_str_repr(clip_size=self.frame_resize, clip_len=None, clip_location=None, clip_step=self.frame_resample, min_clip_step=self.min_frame_resample, max_clip_step=self.max_frame_resample, auto_len=self.auto_resample_num_frames)))
+		DATA_DESCRIPTOR_FILE = os.path.join(self.target_data_folder.replace(P.DATASET_FOLDER, P.ASSETS_FOLDER), 'datadesc.pt')
 
 		data_dict = None
 		try: # Try to load dataset information from file
@@ -143,8 +185,9 @@ class VideoDatasetFolder(Dataset):
 
 		# Save video at reduced size if required. This is useful because reading large-size videos from disk is very
 		# time-consuming, becoming a performance bottleneck during training. So, using resized videos gives a great
-		# performance improvement.
-		if file_ok and (self.frame_resize is not None or self.frame_resample != 1):
+		# performance improvement. If resized data folder already exists, does not overwrite content. In order to
+		# restore a corrupted directory, it is necessary to delete both the 'datadesc.pt' file and the 'target_data_folder'.
+		if file_ok and self.resaving:
 			os.makedirs(os.path.dirname(path.replace(self.data_folder, self.target_data_folder)), exist_ok=True)
 			resized_height = int(self.frame_resize * frame_height / min(frame_height, frame_width)) if self.frame_resize is not None else frame_height
 			resized_width = int(self.frame_resize * frame_width / min(frame_height, frame_width)) if self.frame_resize is not None else frame_width
@@ -155,19 +198,56 @@ class VideoDatasetFolder(Dataset):
 					step = max(step, self.min_frame_resample)
 				if self.max_frame_resample is not None:
 					step = min(step, self.max_frame_resample)
-			out = cv2.VideoWriter(path.replace(self.data_folder, self.target_data_folder), cv2.VideoWriter_fourcc(*'mp4v'), fps, (resized_width, resized_height), True)
-			i, in_count, out_count = 0, 0, 0
-			while i < frame_count:
-				retaining, frame = capture.read()
-				if frame is not None:
-					if in_count % step == 0:
-						frame = np.array(cv2.resize(frame, (resized_width, resized_height)), dtype=np.dtype('uint8'))
-						out.write(frame)
-						out_count += 1
-					in_count += 1
-				i += 1
-			out.release()
-			frame_count = out_count
+
+			if self.backend.lower() == 'img':
+				i, in_count, out_count = 0, 0, 0
+				while i < frame_count:
+					retaining, frame = capture.read()
+					if frame is not None:
+						if in_count % step == 0:
+							save_path = os.path.join(path.replace(self.data_folder, self.target_data_folder).rsplit('.', 1)[0], '{}.jpg'.format(out_count))
+							os.makedirs(os.path.dirname(save_path), exist_ok=True)
+							frame = np.array(cv2.resize(frame, (resized_width, resized_height)), dtype=np.dtype('uint8'))
+							cv2.imwrite(filename=save_path, img=frame)
+							out_count += 1
+						in_count += 1
+					i += 1
+				frame_count = out_count
+				fps = fps // step
+
+			elif self.backend.lower() == 'ffmpeg-python':
+				import ffmpeg
+				i = ffmpeg.input(path.replace(self.data_folder, self.target_data_folder))
+				ffmpeg.output(i, path.replace(self.data_folder, self.target_data_folder),
+			              **{'vf': 'scale={}:{}'.format(2*(resized_width//2), 2*(resized_height//2)),
+			                 'r': fps // step,
+			                 #'c:v': 'libx265', #'crf': 24
+			                 }
+		              ).overwrite_output().run()
+				frame_count = frame_count // step
+				fps = fps // step
+
+			elif self.backend.lower() == 'ffmpeg':
+				subprocess.run('ffmpeg -i {} -vf "scale={}:{}" -r {} '
+				               #'-c:v libx265 '#-crf 24 '
+				               '{}'.format(path, 2*(resized_width//2), 2*(resized_height//2), fps // step, path.replace(self.data_folder, self.target_data_folder)))
+				frame_count = frame_count // step
+				fps = fps // step
+
+			else:
+				out = cv2.VideoWriter(path.replace(self.data_folder, self.target_data_folder), cv2.VideoWriter_fourcc(*'mp4v'), fps // step, (resized_width, resized_height), True)
+				i, in_count, out_count = 0, 0, 0
+				while i < frame_count:
+					retaining, frame = capture.read()
+					if frame is not None:
+						if in_count % step == 0:
+							frame = np.array(cv2.resize(frame, (resized_width, resized_height)), dtype=np.dtype('uint8'))
+							out.write(frame)
+							out_count += 1
+						in_count += 1
+					i += 1
+				out.release()
+				frame_count = out_count
 
 		capture.release()
 		if not file_ok: # Clean opencv error message
@@ -175,31 +255,57 @@ class VideoDatasetFolder(Dataset):
 
 		return file_ok and frame_count > 0, frame_count, fps
 
-	def read_video(self, path, fps, start=0, end=None, step=1):
+	def read_video_from_imgs(self, path, start=0, end=None, step=1):
+		frames = []
+		frame_count = len(os.listdir(path))
+		if end is None: end = frame_count - 1
+		for i in range(start, end + 1, step):
+			idx = i
+			if self.frame_jitter is not None: idx = i + random.randint(0, int(step*self.frame_jitter))
+			if os.path.exists(os.path.join(path, '{}.jpg'.format(idx))):
+				frame = np.array(cv2.imread(os.path.join(path, '{}.jpg'.format(idx))), dtype=np.dtype('uint8'))
+				frames.append(frame)
+		return frames
+
+	def read_video(self, path, fps=None, start=0, end=None, step=1):
 		"""
 		Reads video at specified path, and returns it as a pytorch tensor with shape [T, C, H, W], where T is the number
 		of time frames, C is the number of channels, and H and W are the height and width dimensions of each frame.
 		:param path: Path to read the video from.
 		:return: Tensor with shape [T, C, H, W].
 		"""
-		#return read_video(path, start_pts=start/fps, end_pts=end/fps, pts_unit='sec')[0].permute(0, 3, 1, 2)[::step] # Requires PyAV, thread-unsafe, slower
-		# Initialize a VideoCapture object to read video data into a numpy array
-		capture = cv2.VideoCapture(path)
-
-		frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-
 		frames = []
-		i = start
-		count = 0
-		capture.set(cv2.CAP_PROP_POS_FRAMES, i - 1)
-		if end is None: end = frame_count - 1
-		retaining = True
-		while (i < end + 1 and (retaining or not self.stop_on_invalid_frames)):
-			retaining, frame = capture.read()
-			if frame is not None:
-				if count % step == 0: frames.append(np.array(frame, dtype=np.dtype('uint8')))
-				count += 1
-			i += 1
+
+		if self.backend.lower() == 'img':
+			frames = self.read_video_from_imgs(path.rsplit('.', 1)[0], start, end, step)
+
+		elif self.backend.lower() == 'pyav':
+			from torchvision.io import read_video
+			return frame_subsample(read_video(path, start_pts=start/fps, end_pts=end/fps, pts_unit='sec')[0].permute(0, 3, 1, 2), step, self.frame_jitter) # Requires PyAV, thread-unsafe, slower
+
+		else:
+			# Initialize a VideoCapture object to read video data into a numpy array
+			capture = cv2.VideoCapture(path)
+
+			frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+			i = start
+			count = 0
+			idx = 0
+			capture.set(cv2.CAP_PROP_POS_FRAMES, i - 1)
+			if end is None: end = frame_count - 1
+			retaining = True
+			while (i < end + 1 and (retaining or not self.stop_on_invalid_frames)):
+				retaining, frame = capture.read()
+				if frame is not None:
+					if count % step == 0:
+						idx = count
+						if self.frame_jitter is not None: idx = count + random.randint(0, int(step*self.frame_jitter))
+					if count == idx: frames.append(np.array(frame, dtype=np.dtype('uint8')))
+					count += 1
+				i += 1
+
+			# Release the VideoCapture once it is no longer needed
+			capture.release()
 
 		if len(frames) == 0:
 			if self.default_shape is None: raise RuntimeError("No frames found in file {}".format(path))
@@ -207,16 +313,15 @@ class VideoDatasetFolder(Dataset):
 			frames = np.zeros(((end + 1 - start) // step, *self.default_shape), dtype=np.dtype('uint8'))
 		frames = np.stack(frames, axis=0)
 
-		# Release the VideoCapture once it is no longer needed
-		capture.release()
-
 		return torch.tensor(frames, device='cpu', dtype=torch.uint8).permute(0, 3, 1, 2)
 
 	def __getitem__(self, index):
-		file_path = os.path.join(self.target_data_folder, self.file_names[index])
+		video_idx, clip_idx = divmod(index, self.clips_per_video*self.crops_per_video)
+		clip_idx, crop_idx = divmod(clip_idx, self.crops_per_video)
+		file_path = os.path.join(self.target_data_folder, self.file_names[video_idx])
 
 		# Read video and label for the element at the specified index
-		frame_count, fps = self.frame_counts[index], self.fps_counts[index]
+		frame_count, fps = self.frame_counts[video_idx], self.fps_counts[video_idx]
 		start, end, step, n_frames = self.clip_location, None, self.space_between_frames, self.frames_per_clip
 		if n_frames is None: n_frames = frame_count
 		if step == 'rand':
@@ -242,18 +347,20 @@ class VideoDatasetFolder(Dataset):
 		if self.clip_location == 'start': start = 0
 		if self.clip_location == 'center': start = max(0, (frame_count - n_frames * step) // 2)
 		if self.clip_location == 'random': start = random.randint(0, max(0, frame_count - n_frames * step))
+		start = start + (clip_idx * frame_count)//self.clips_per_video
 		start, end = (start, start + n_frames * step - 1) if start is not None and frame_count >= start + n_frames * step else (0, None)
-		buffer = self.read_video(file_path, fps, start, end, step)
-		label = torch.tensor(self.labels[index], dtype=torch.int64, device='cpu')
+		buffer = spatial_crop(self.read_video(file_path, fps, start, end, step), crop_idx, self.crops_per_video)
+		label = torch.tensor(self.labels[video_idx], dtype=torch.int64, device='cpu')
+		index = torch.tensor(index, dtype=torch.int64, device='cpu')
 
 		# Apply transformations if necessary
 		if self.transform is not None:
 			buffer = self.transform(buffer)
 
-		return buffer, label
+		return buffer, label, index
 
 	def __len__(self):
-		return len(self.file_names)
+		return len(self.file_names) * self.clips_per_video * self.crops_per_video
 
 
 class VideoDataManager:
@@ -266,6 +373,7 @@ class VideoDataManager:
 			raise ValueError("Only dtypes float32 and uint8 are supported on device cpu, not {}".format(self.processing_dtype))
 		self.batch_size = config.get('batch_size', 32)
 		self.eval_batch_size = config.get('eval_batch_size', self.batch_size)
+		self.preproc_batch_size = config.get('preproc_batch_size', self.eval_batch_size)
 		self.augment_manager = config.get('augment_manager', None)
 		self.augment_manager = utils.retrieve(self.augment_manager)(config) if self.augment_manager is not None else None
 		self.input_size = config.get('input_size', 112)
@@ -283,6 +391,13 @@ class VideoDataManager:
 		self.eval_auto_len = config.get('eval_auto_len', self.auto_len)
 		self.eval_min_auto_len = config.get('eval_min_auto_len', self.min_auto_len)
 		self.eval_max_auto_len = config.get('eval_max_auto_len', self.max_auto_len)
+		self.preproc_clip_len = config.get('preproc_clip_len', self.eval_clip_len)
+		self.preproc_clip_step = config.get('preproc_clip_step', self.eval_clip_step)
+		self.preproc_min_clip_step = config.get('preproc_min_clip_step', self.eval_min_clip_step)
+		self.preproc_max_clip_step = config.get('preproc_max_clip_step', self.eval_max_clip_step)
+		self.preproc_auto_len = config.get('preproc_auto_len', self.eval_auto_len)
+		self.preproc_min_auto_len = config.get('preproc_min_auto_len', self.eval_min_auto_len)
+		self.preproc_max_auto_len = config.get('preproc_max_auto_len', self.eval_max_auto_len)
 		self.frame_resize = config.get('frame_resize', None)
 		self.frame_resample = config.get('frame_resample', 1)
 		self.min_frame_resample = config.get('min_frame_resample', None)
@@ -292,6 +407,7 @@ class VideoDataManager:
 		self.space_between_frames = config.get('space_between_frames', 1)
 		self.min_space_between_frames = config.get('min_space_between_frames', None)
 		self.max_space_between_frames = config.get('max_space_between_frames', None)
+		self.frame_jitter = config.get('frame_jitter', None)
 		self.auto_frames = config.get('auto_frames', None)
 		self.min_auto_frames = config.get('min_auto_frames', None)
 		self.max_auto_frames = config.get('max_auto_frames', None)
@@ -299,12 +415,27 @@ class VideoDataManager:
 		self.eval_space_between_frames = config.get('eval_space_between_frames', self.space_between_frames)
 		self.eval_min_space_between_frames = config.get('eval_min_space_between_frames', self.min_space_between_frames)
 		self.eval_max_space_between_frames = config.get('eval_max_space_between_frames', self.max_space_between_frames)
+		self.eval_frame_jitter = config.get('eval_frame_jitter', None)
 		self.eval_auto_frames = config.get('eval_auto_frames', self.auto_frames)
 		self.eval_min_auto_frames = config.get('eval_min_auto_frames', self.min_auto_frames)
 		self.eval_max_auto_frames = config.get('eval_max_auto_frames', self.max_auto_frames)
+		self.preproc_frames_per_clip = config.get('preproc_frames_per_clip', self.preproc_clip_len)
+		self.preproc_space_between_frames = config.get('preproc_space_between_frames', self.eval_space_between_frames)
+		self.preproc_min_space_between_frames = config.get('preproc_min_space_between_frames', self.eval_min_space_between_frames)
+		self.preproc_max_space_between_frames = config.get('preproc_max_space_between_frames', self.eval_max_space_between_frames)
+		self.preproc_frame_jitter = config.get('preproc_frame_jitter', None)
+		self.preproc_auto_frames = config.get('preproc_auto_frames', self.eval_auto_frames)
+		self.preproc_min_auto_frames = config.get('preproc_min_auto_frames', self.eval_min_auto_frames)
+		self.preproc_max_auto_frames = config.get('preproc_max_auto_frames', self.eval_max_auto_frames)
 		self.clip_location = config.get('clip_location', 'random')
 		self.eval_clip_location = config.get('eval_clip_location', self.clip_location)
-		self.stop_on_invalid_frames = config.get('stop_on_invalid_frames', True)
+		self.preproc_clip_location = config.get('preproc_clip_location', self.eval_clip_location)
+		self.stop_on_invalid_frames = config.get('stop_on_invalid_frames', False)
+		self.backend = config.get('data_backend', 'default')
+		self.multicrop_test = config.get('multicrop_test', False)
+		self.clips_per_video = 1 if self.multicrop_test else config.get('clips_per_video', 1)
+		self.crops_per_video = 1 if self.multicrop_test else config.get('crops_per_video', 1)
+		self.cliplvl_split = config.get('cliplvl_split', False)
 		self.timediff_enc = config.get('timediff_enc', False)
 
 		# Setup RNG state for reproducibility
@@ -320,17 +451,32 @@ class VideoDataManager:
 		# Define data transformations
 		T = [] # Standard transformations for evaluation
 		T.append(OffsetClip(self.eval_clip_len, offset=self.eval_clip_location, clip_step=self.eval_clip_step, min_clip_step=self.eval_min_clip_step, max_clip_step=self.eval_max_clip_step,
-		                    auto_len=self.eval_auto_len, min_auto_len=self.eval_min_auto_len, max_auto_len=self.eval_max_auto_len)) # Take a fixed-size clip from a desired offset of the video
+							auto_len=self.eval_auto_len, min_auto_len=self.eval_min_auto_len, max_auto_len=self.eval_max_auto_len)) # Take a fixed-size clip from a desired offset of the video
 		if self.input_size != self.frame_resize: T.append(transforms.Resize(self.input_size, antialias=True)) # Resize shortest side of the frames to the desired size (unless input was already saved on disk at the desired size)
 		T.append(transforms.CenterCrop(self.input_size)) # Take central square crop of desired size
 		T.append(ToTensor()) # Map tensor values from integers in the range [0, 255] to floats in the range [0, 1], with shape [C, T, H, W]
 		self.T = transforms.Compose(T)
+		self.T_test = self.T # Standard transformations for testing
+		if self.multicrop_test:
+			T_test = [] # Standard transformations for evaluation
+			T_test.append(OffsetClip(clip_len_for_multicrop(self.eval_clip_len, config.get('clips_per_video', 10)), offset=self.eval_clip_location, clip_step=self.eval_clip_step, min_clip_step=self.eval_min_clip_step, max_clip_step=self.eval_max_clip_step,
+								auto_len=self.eval_auto_len, min_auto_len=self.eval_min_auto_len, max_auto_len=self.eval_max_auto_len)) # Take a fixed-size clip from a desired offset of the video
+			if self.input_size != self.frame_resize: T_test.append(transforms.Resize(self.input_size, antialias=True)) # Resize shortest side of the frames to the desired size (unless input was already saved on disk at the desired size)
+			T_test.append(ToTensor()) # Map tensor values from integers in the range [0, 255] to floats in the range [0, 1], with shape [C, T, H, W]
+			self.T_test = transforms.Compose(T_test)
+		T_preproc = [] # Standard transformations for preprocessing
+		T_preproc.append(OffsetClip(self.preproc_clip_len, offset=self.preproc_clip_location, clip_step=self.preproc_clip_step, min_clip_step=self.preproc_min_clip_step, max_clip_step=self.preproc_max_clip_step,
+							auto_len=self.preproc_auto_len, min_auto_len=self.preproc_min_auto_len, max_auto_len=self.preproc_max_auto_len)) # Take a fixed-size clip from a desired offset of the video
+		if self.input_size != self.frame_resize: T_preproc.append(transforms.Resize(self.input_size, antialias=True)) # Resize shortest side of the frames to the desired size (unless input was already saved on disk at the desired size)
+		T_preproc.append(transforms.CenterCrop(self.input_size)) # Take central square crop of desired size
+		T_preproc.append(ToTensor()) # Map tensor values from integers in the range [0, 255] to floats in the range [0, 1], with shape [C, T, H, W]
+		self.T_preproc = transforms.Compose(T_preproc)
 		T_augm = [] # Randomized transformations with data augmentation for training
 		if self.augment_manager is not None:
 			T_augm.append(self.augment_manager.get_transform())
 		else:
 			T_augm.append(OffsetClip(self.clip_len, offset=self.clip_location, clip_step=self.clip_step, min_clip_step=self.min_clip_step, max_clip_step=self.max_clip_step,
-			                         auto_len=self.auto_len, min_auto_len=self.min_auto_len, max_auto_len=self.max_auto_len)) # Take a fixed-size clip from a random temporal location of the video
+									 auto_len=self.auto_len, min_auto_len=self.min_auto_len, max_auto_len=self.max_auto_len)) # Take a fixed-size clip from a random temporal location of the video
 			if self.input_size != self.frame_resize: T_augm.append(transforms.Resize(self.input_size, antialias=True)) # Resize shortest side of the frames to the desired size (unless input was already saved on disk at the desired size)
 			T_augm.append(transforms.RandomHorizontalFlip())
 		T_augm.append(transforms.CenterCrop(self.input_size)) # Take central square crop of desired size
@@ -345,27 +491,32 @@ class VideoDataManager:
 		T_norm = Normalize(self.mean, self.std)
 		T_conv = Convert(dtype=self.processing_dtype, device=self.processing_device)
 		self.T = transforms.Compose([T_conv, self.T, T_norm])
+		self.T_test = transforms.Compose([T_conv, self.T_test, T_norm])
 		self.T_augm = transforms.Compose([T_conv, self.T_augm, T_norm])
 
 		# Add time-difference encoding transformation if necessary
 		if self.timediff_enc:
 			T_timediff = TimeDiff()
 			self.T = transforms.Compose([self.T, T_timediff])
+			self.T_test = transforms.Compose([self.T_test, T_timediff])
 			self.T_augm = transforms.Compose([self.T_augm, T_timediff])
+
+		# Take multiple crops (concatenated along the channel dimension) for testing if required
+		if self.multicrop_test: self.T_test = transforms.Compose([self.T_test, MultiCrop(config.get('crops_per_video', 3), config.get('clips_per_video', 10))])
 
 		# Load Datasets
 		self.trn_set = self.load_split(self.get_trn_split(frames_per_clip=self.frames_per_clip, clip_location=self.clip_location, space_between_frames=self.space_between_frames,
-                          min_space_between_frames=self.min_space_between_frames, max_space_between_frames=self.max_space_between_frames,
-                          auto_frames=self.auto_frames, min_auto_frames=self.min_auto_frames, max_auto_frames=self.max_auto_frames,
-                          transform=self.T_augm), self.batch_size, shuffle=True)
+						  min_space_between_frames=self.min_space_between_frames, max_space_between_frames=self.max_space_between_frames, frame_jitter=self.frame_jitter,
+						  auto_frames=self.auto_frames, min_auto_frames=self.min_auto_frames, max_auto_frames=self.max_auto_frames,
+						  transform=self.T_augm), self.batch_size, shuffle=True)
 		self.val_set = self.load_split(self.get_val_split(frames_per_clip=self.eval_frames_per_clip, clip_location=self.eval_clip_location, space_between_frames=self.eval_space_between_frames,
-                          min_space_between_frames=self.eval_min_space_between_frames, max_space_between_frames=self.eval_max_space_between_frames,
-                          auto_frames=self.eval_auto_frames, min_auto_frames=self.eval_min_auto_frames, max_auto_frames=self.eval_max_auto_frames,
-                          transform=self.T), self.eval_batch_size)
-		self.tst_set = self.load_split(self.get_tst_split(frames_per_clip=self.eval_frames_per_clip, clip_location=self.eval_clip_location, space_between_frames=self.eval_space_between_frames,
-                          min_space_between_frames=self.eval_min_space_between_frames, max_space_between_frames=self.eval_max_space_between_frames,
-                          auto_frames=self.eval_auto_frames, min_auto_frames=self.eval_min_auto_frames, max_auto_frames=self.eval_max_auto_frames,
-                          transform=self.T), self.eval_batch_size)
+						  min_space_between_frames=self.eval_min_space_between_frames, max_space_between_frames=self.eval_max_space_between_frames, frame_jitter=self.eval_frame_jitter,
+						  auto_frames=self.eval_auto_frames, min_auto_frames=self.eval_min_auto_frames, max_auto_frames=self.eval_max_auto_frames,
+						  transform=self.T), self.eval_batch_size)
+		self.tst_set = self.load_split(self.get_tst_split(frames_per_clip=clip_len_for_multicrop(self.eval_frames_per_clip, config.get('clips_per_video', 10)) if self.multicrop_test else self.eval_frames_per_clip, clip_location=self.eval_clip_location, space_between_frames=self.eval_space_between_frames,
+						  min_space_between_frames=self.eval_min_space_between_frames, max_space_between_frames=self.eval_max_space_between_frames, frame_jitter=self.eval_frame_jitter,
+						  auto_frames=self.eval_auto_frames, min_auto_frames=self.eval_min_auto_frames, max_auto_frames=self.eval_max_auto_frames,
+						  transform=self.T_test), self.eval_batch_size)
 
 		# Restore previous RNG state
 		utils.set_rng_state(prev_rng_state)
@@ -376,10 +527,12 @@ class VideoDataManager:
 	def acquire_dataset_metadata(self):
 		self.dataset_name = self.get_dataset_name()
 		self.data_folder = os.path.join(P.DATASET_FOLDER, self.dataset_name)
-		self.target_data_folder = self.data_folder if self.frame_resize is None and self.frame_resample == 1 else self.data_folder + '_' + clip_str_repr(clip_size=self.frame_resize, clip_len=None, clip_location=None, clip_step=self.frame_resample, min_clip_step=self.min_frame_resample, max_clip_step=self.max_frame_resample, auto_len=self.auto_resample_num_frames)
+		self.resaving = backend_str_repr(self.backend) != '' or self.frame_resize is not None or self.frame_resample > 1
+		self.target_data_folder = self.data_folder if not self.resaving else self.data_folder + clip_str_repr(clip_size=self.frame_resize, clip_len=None, clip_location=None, clip_step=self.frame_resample, min_clip_step=self.min_frame_resample, max_clip_step=self.max_frame_resample, auto_len=self.auto_resample_num_frames) + backend_str_repr(self.backend)
+		clip_opts = dict(clips_per_video=self.clips_per_video, crops_per_video=self.crops_per_video) if self.cliplvl_split else {}
 		dataset = VideoDatasetFolder(self.data_folder, self.target_data_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
-		                             min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample,
-		                             auto_resample_num_frames=self.auto_resample_num_frames, stop_on_invalid_frames=self.stop_on_invalid_frames)
+									 min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, backend=self.backend,
+									 auto_resample_num_frames=self.auto_resample_num_frames, stop_on_invalid_frames=self.stop_on_invalid_frames, **clip_opts)
 		self.dataset_size = len(dataset)
 		self.input_channels = dataset[0][0].shape[1]
 		self.num_classes = len(dataset.classes)
@@ -388,52 +541,55 @@ class VideoDataManager:
 		self.splitsizes = config.get('splitsizes', (0.70, 0.15))
 		if sum(self.splitsizes) > 1:
 			raise ValueError("The sum of splitsizes must be <= 1, found {}".format(self.splitsizes))
-		trn_size = int(self.splitsizes[0]*self.dataset_size)
-		val_size = int(self.splitsizes[1]*self.dataset_size)
-		tst_size = self.dataset_size - trn_size - val_size
+		self.trn_size = int(self.splitsizes[0]*self.dataset_size)
+		self.val_size = int(self.splitsizes[1]*self.dataset_size)
+		self.tst_size = self.dataset_size - self.trn_size - self.val_size
 		self.indices = list(range(self.dataset_size))
 		random.shuffle(self.indices)
-		self.trn_idx = self.indices[:trn_size]
-		self.val_idx = self.indices[trn_size:-tst_size]
-		self.tst_idx = self.indices[-tst_size:] if tst_size > 0 else self.val_idx # test on validation samples if tst_size == 0
+		self.trn_idx = self.indices[:self.trn_size]
+		self.val_idx = self.indices[self.trn_size:-self.tst_size]
+		self.tst_idx = self.indices[-self.tst_size:] if self.tst_size > 0 else self.val_idx # test on validation samples if tst_size == 0
 
 	def get_trn_split(self, frames_per_clip=16, clip_location='start', space_between_frames=1,
-	                  min_space_between_frames=None, max_space_between_frames=None,
-	                  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
-	                  transform=None):
+					  min_space_between_frames=None, max_space_between_frames=None,
+					  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
+					  frame_jitter=None, transform=None):
+		clip_opts = dict(clips_per_video=self.clips_per_video, crops_per_video=self.crops_per_video) if self.cliplvl_split else {}
 		split = VideoDatasetFolder(self.data_folder, self.target_data_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
-		                           min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
-		                           frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
-		                           min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
-		                           auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
-		                           transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+								   min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+								   backend=self.backend, frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+								   min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+								   auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+								   frame_jitter=frame_jitter, **clip_opts, transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
 		split = Subset(split, self.trn_idx)
 		return split
 
 	def get_val_split(self, frames_per_clip=16, clip_location='start', space_between_frames=1,
-	                  min_space_between_frames=None, max_space_between_frames=None,
-	                  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
-	                  transform=None):
+					  min_space_between_frames=None, max_space_between_frames=None,
+					  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
+					  frame_jitter=None, transform=None):
+		clip_opts = dict(clips_per_video=self.clips_per_video, crops_per_video=self.crops_per_video) if self.cliplvl_split else {}
 		split = VideoDatasetFolder(self.data_folder, self.target_data_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
-		                           min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
-		                           frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
-		                           min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
-		                           auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
-		                           transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+								   min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+								   backend=self.backend, frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+								   min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+								   auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+								   frame_jitter=frame_jitter, **clip_opts, transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
 		split = Subset(split, self.val_idx)
 		return split
 
 	def get_tst_split(self, frames_per_clip=16, clip_location='start', space_between_frames=1,
-	                  min_space_between_frames=None, max_space_between_frames=None,
-	                  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
-	                  transform=None):
+					  min_space_between_frames=None, max_space_between_frames=None,
+					  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
+					  frame_jitter=None, transform=None):
 		split = VideoDatasetFolder(self.data_folder, self.target_data_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
-		                           min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
-		                           frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
-		                           min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
-		                           auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
-		                           transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
-		split = Subset(split, self.tst_idx)
+								   min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+								   backend=self.backend, frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+								   min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+								   auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+								   frame_jitter=frame_jitter, clips_per_video=self.clips_per_video, crops_per_video=self.crops_per_video,
+								   transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+		split = Subset(split, self.tst_idx if self.cliplvl_split else [idx*self.crops_per_video*self.clips_per_video + i for idx in self.tst_idx for i in range(self.crops_per_video*self.clips_per_video)])
 		return split
 
 	def load_split(self, split, batch_size, shuffle=False):
@@ -450,21 +606,23 @@ class VideoDataManager:
 		return self.tst_set
 
 	def get_stats(self):
-		STATS_FILE = os.path.join(P.ASSETS_FOLDER, self.dataset_name, 'stats_seed-{}_{}.pt'.format(self.dataseed, clip_str_repr(clip_size=self.input_size, clip_len=self.eval_clip_len, clip_location=self.eval_clip_location, clip_step=self.eval_clip_step, min_clip_step=self.eval_min_clip_step, max_clip_step=self.eval_max_clip_step, auto_len=self.eval_auto_len, min_auto_len=self.eval_min_auto_len, max_auto_len=self.eval_max_auto_len)))
+		STATS_FILE = os.path.join(self.target_data_folder.replace(P.DATASET_FOLDER, P.ASSETS_FOLDER), 'stats_seed-{}{}{}.pt'.format(self.dataseed,
+			clip_str_repr(clip_size=self.input_size, clip_len=self.preproc_frames_per_clip, clip_location=self.preproc_clip_location, clip_step=self.preproc_space_between_frames, min_clip_step=self.preproc_min_space_between_frames, max_clip_step=self.preproc_max_space_between_frames, auto_len=self.preproc_auto_frames, min_auto_len=self.preproc_min_auto_frames, max_auto_len=self.preproc_max_auto_frames, frame_jitter=self.preproc_frame_jitter),
+			clip_str_repr(clip_size=self.input_size, clip_len=self.preproc_clip_len, clip_location=self.preproc_clip_location, clip_step=self.preproc_clip_step, min_clip_step=self.preproc_min_clip_step, max_clip_step=self.preproc_max_clip_step, auto_len=self.preproc_auto_len, min_auto_len=self.preproc_min_auto_len, max_auto_len=self.preproc_max_auto_len)))
 		stats_dict = None
 		try:  # Try to load stats from file
 			stats_dict = utils.load_dict(STATS_FILE)
 		except:  # Stats file does not exist --> Compute statistics
-			dataset = self.load_split(self.get_trn_split(frames_per_clip=self.eval_frames_per_clip, clip_location=self.eval_clip_location, space_between_frames=self.eval_space_between_frames,
-                          min_space_between_frames=self.eval_min_space_between_frames, max_space_between_frames=self.eval_max_space_between_frames,
-                          auto_frames=self.eval_auto_frames, min_auto_frames=self.eval_min_auto_frames, max_auto_frames=self.eval_max_auto_frames,
-                          transform=self.T), self.eval_batch_size)
+			dataset = self.load_split(self.get_trn_split(frames_per_clip=self.preproc_frames_per_clip, clip_location=self.preproc_clip_location, space_between_frames=self.preproc_space_between_frames,
+						  min_space_between_frames=self.preproc_min_space_between_frames, max_space_between_frames=self.preproc_max_space_between_frames,
+						  auto_frames=self.preproc_auto_frames, min_auto_frames=self.preproc_min_auto_frames, max_auto_frames=self.preproc_max_auto_frames,
+						  frame_jitter=self.preproc_frame_jitter, transform=self.T_preproc), self.preproc_batch_size)
 			sum = torch.zeros(self.input_channels, device=P.DEVICE)
 			sum_sq = torch.zeros(self.input_channels, device=P.DEVICE)
 			count = 0
 			print("Computing dataset statistics...")
 			for batch in tqdm(dataset, ncols=80):
-				inputs, _ = batch
+				inputs, _, _ = batch
 				inputs = inputs.to(P.DEVICE)
 				count += inputs.shape[0]
 				sum += inputs.mean(dim=(2, 3, 4)).sum(0)
@@ -496,9 +654,11 @@ class KineticsDataManager(VideoDataManager):
 	def acquire_dataset_metadata(self):
 		self.dataset_name = self.get_dataset_name()
 		self.data_folder = os.path.join(P.DATASET_FOLDER, self.dataset_name)
-		self.target_data_folder = self.data_folder if self.frame_resize is None and self.frame_resample == 1 else self.data_folder + '_' + clip_str_repr(clip_size=self.frame_resize, clip_len=None, clip_location=None, clip_step=self.frame_resample, min_clip_step=self.min_frame_resample, max_clip_step=self.max_frame_resample, auto_len=self.auto_resample_num_frames)
+		self.resaving = self.frame_resize is not None or self.frame_resample > 1 or self.backend
+		self.target_data_folder = self.data_folder if not self.resaving else self.data_folder + clip_str_repr(clip_size=self.frame_resize, clip_len=None, clip_location=None, clip_step=self.frame_resample, min_clip_step=self.min_frame_resample, max_clip_step=self.max_frame_resample, auto_len=self.auto_resample_num_frames) + backend_str_repr(self.backend)
 		trn_split, val_split, tst_split = self.get_trn_split(), self.get_val_split(), self.get_tst_split()
-		self.dataset_size = len(trn_split) + len(val_split) + len(tst_split)
+		self.trn_size, self.val_size, self.tst_size = len(trn_split), len(val_split), len(tst_split) // (self.clips_per_video * self.crops_per_video)
+		self.dataset_size = self.trn_size + self.val_size + self.tst_size
 		self.input_channels = trn_split[0][0].shape[1]
 		self.num_classes = int(self.dataset_version)
 
@@ -506,45 +666,46 @@ class KineticsDataManager(VideoDataManager):
 		pass
 
 	def get_trn_split(self, frames_per_clip=16, clip_location='start', space_between_frames=1,
-	                  min_space_between_frames=None, max_space_between_frames=None,
-	                  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
-	                  transform=None):
+					  min_space_between_frames=None, max_space_between_frames=None,
+					  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
+					  frame_jitter=None, transform=None):
 		KineticsDownloader(self.data_folder, num_classes=self.dataset_version, split='train').download_if_needed()
 		trn_folder, target_trn_folder = os.path.join(self.data_folder, 'train', 'train'), os.path.join(self.target_data_folder, 'train')
 		split = VideoDatasetFolder(trn_folder, target_trn_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
-		                           min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
-		                           frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
-		                           min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
-		                           auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
-		                           transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+								   min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+								   backend=self.backend, frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+								   min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+								   auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+								   frame_jitter=frame_jitter, transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
 		return split
 
 	def get_val_split(self, frames_per_clip=16, clip_location='start', space_between_frames=1,
-	                  min_space_between_frames=None, max_space_between_frames=None,
-	                  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
-	                  transform=None):
+					  min_space_between_frames=None, max_space_between_frames=None,
+					  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
+					  frame_jitter=None, transform=None):
 		KineticsDownloader(self.data_folder, num_classes=self.dataset_version, split='val').download_if_needed()
 		val_folder, target_val_folder = os.path.join(self.data_folder, 'val', 'val'), os.path.join(self.target_data_folder, 'val')
 		split = VideoDatasetFolder(val_folder, target_val_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
-		                           min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
-		                           frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
-		                           min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
-		                           auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
-		                           transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+								   min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+								   backend=self.backend, frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+								   min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+								   auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+								   frame_jitter=frame_jitter, transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
 		return split
 
 	def get_tst_split(self, frames_per_clip=16, clip_location='start', space_between_frames=1,
-	                  min_space_between_frames=None, max_space_between_frames=None,
-	                  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
-	                  transform=None):
+					  min_space_between_frames=None, max_space_between_frames=None,
+					  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
+					  frame_jitter=None, transform=None):
 		KineticsDownloader(self.data_folder, num_classes=self.dataset_version, split='test').download_if_needed()
 		tst_folder, target_tst_folder = os.path.join(self.data_folder, 'test', 'test'), os.path.join(self.target_data_folder, 'test')
 		split = VideoDatasetFolder(tst_folder, target_tst_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
-		                           min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
-		                           frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
-		                           min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
-		                           auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
-		                           transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+								   min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+								   backend=self.backend, frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+								   min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+								   auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+								   frame_jitter=frame_jitter, clips_per_video=self.clips_per_video, crops_per_video=self.crops_per_video,
+								   transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
 		return split
 
 # Custom object to obtain data augmentation transformations
@@ -564,13 +725,12 @@ class HardAugmentManager(AugmentManager):
 		interframe_dist = config.get('interframe_dist', 1)
 		max_interframe_dist = config.get('max_interframe_dist', None)
 		input_size = config.get('input_size', 112)
-		rel_delta = config.get('da_rel_delta', 0.25)
-		delta = int(rel_delta * input_size)
-		time_scale_rel_delta = config.get('da_time_scale_rel_delta', 0.5)
+		rel_delta = config.get('da_rel_delta', 1.25)
+		time_scale_rel_delta = config.get('da_time_scale_rel_delta', 1.5)
 		time_scale_p = config.get('da_time_scale_p', 0.3)
 		timeflip_p = config.get('da_timeflip_p', 0.3)
-		nonunifsample_step = config.get('da_nonunifsample_step', 4)
-		nonunifsample_p = config.get('da_nonunifsample_p', 0.2)
+		framejitter_step = config.get('da_framejitter_step', 4)
+		framejitter_p = config.get('da_framejitter_p', 0.2)
 
 		resize_p = config.get('da_resize_p', 0.3)
 		rot_degrees = config.get('da_rot_degrees', 180) #30)
@@ -586,13 +746,13 @@ class HardAugmentManager(AugmentManager):
 
 		T_augm = []
 		if time_scale_rel_delta != 0 and time_scale_p > 0:
-			T_augm.append(transforms.Resize(input_size + delta, antialias=True))
+			T_augm.append(transforms.Resize(input_size*rel_delta), antialias=True)
 			T_augm.append(transforms.RandomApply([
-				RandomTimeScale(1 - time_scale_rel_delta, 1 + time_scale_rel_delta)
+				RandomTimeScale(1/time_scale_rel_delta, time_scale_rel_delta)
 			], p=time_scale_p))
 		T_augm.append(transforms.RandomApply([
-			NonUniformFrameSample(nonunifsample_step)
-		], p=nonunifsample_p))
+			JitteredFrameSampling(framejitter_step)
+		], p=framejitter_p))
 		T_augm.append(OffsetClip(clip_len, clip_step=interframe_dist, max_clip_step=max_interframe_dist, offset='random'))
 		T_augm.append(transforms.RandomApply([
 			transforms.ColorJitter(brightness=jit_brightness, contrast=jit_contrast, saturation=jit_saturation, hue=jit_hue/360)
@@ -601,13 +761,13 @@ class HardAugmentManager(AugmentManager):
 		T_augm.append(transforms.RandomHorizontalFlip())
 		T_augm.append(RandomTimeFlip(p=timeflip_p))
 		T_augm.append(transforms.RandomApply([
-			transforms.Lambda(RandomResize(input_size - delta, input_size + delta))  # Random rescale
+			transforms.Lambda(RandomResize(input_size/rel_delta, input_size*rel_delta))  # Random rescale
 		], p=resize_p))
 		T_augm.append(transforms.RandomApply([
 			transforms.RandomRotation(degrees=rot_degrees, expand=True)
 		], p=rot_p))
 		T_augm.append(transforms.RandomApply([
-			transforms.CenterCrop(input_size + delta),  # Take a fixed-size central crop
+			transforms.CenterCrop(input_size*rel_delta),  # Take a fixed-size central crop
 			transforms.RandomCrop(input_size) # Take a smaller fixed-size crop at random position (random translation)
 		], p=transl_p))
 		self.T_augm = transforms.Compose(T_augm)
@@ -621,9 +781,8 @@ class LightAugmentManager(AugmentManager):
 		interframe_dist = config.get('interframe_dist', 1)
 		max_interframe_dist = config.get('max_interframe_dist', None)
 		input_size = config.get('input_size', 112)
-		rel_delta = config.get('da_rel_delta', 0.25)
-		delta = int(rel_delta * input_size)
-		time_scale_rel_delta = config.get('da_time_scale_rel_delta', 0.25)
+		rel_delta = config.get('da_rel_delta', 1.25)
+		time_scale_rel_delta = config.get('da_time_scale_rel_delta', 1.25)
 		time_scale_p = config.get('da_time_scale_p', 0.3)
 
 		resize_p = config.get('da_resize_p', 0.3)
@@ -633,20 +792,20 @@ class LightAugmentManager(AugmentManager):
 
 		T_augm = []
 		if time_scale_rel_delta != 0 and time_scale_p > 0:
-			T_augm.append(transforms.Resize(input_size + delta, antialias=True))
+			T_augm.append(transforms.Resize(input_size*rel_delta, antialias=True))
 			T_augm.append(transforms.RandomApply([
-				RandomTimeScale(1 - time_scale_rel_delta, 1 + time_scale_rel_delta)
+				RandomTimeScale(1/time_scale_rel_delta, time_scale_rel_delta)
 			], p=time_scale_p))
 		T_augm.append(OffsetClip(clip_len, clip_step=interframe_dist, max_clip_step=max_interframe_dist, offset='random'))
 		T_augm.append(transforms.RandomHorizontalFlip())
 		T_augm.append(transforms.RandomApply([
-			transforms.Lambda(RandomResize(input_size - delta, input_size + delta))  # Random rescale
+			transforms.Lambda(RandomResize(input_size/rel_delta, input_size*rel_delta))  # Random rescale
 		], p=resize_p))
 		T_augm.append(transforms.RandomApply([
 			transforms.RandomRotation(degrees=rot_degrees, expand=True)
 		], p=rot_p))
 		T_augm.append(transforms.RandomApply([
-			transforms.CenterCrop(input_size + delta),  # Take a fixed-size central crop
+			transforms.CenterCrop(input_size*rel_delta),  # Take a fixed-size central crop
 			transforms.RandomCrop(input_size) # Take a smaller fixed-size crop at random position (random translation)
 		], p=transl_p))
 		self.T_augm = transforms.Compose(T_augm)
@@ -655,8 +814,8 @@ class LightAugmentManager(AugmentManager):
 # Custom transform for random input resize
 class RandomResize:
 	def __init__(self, min_size, max_size):
-		self.min_size = min_size
-		self.max_size = max_size
+		self.min_size = int(min_size)
+		self.max_size = int(max_size)
 
 	def __call__(self, x):
 		return TF.resize(x, random.randint(self.min_size, self.max_size), antialias=True)
@@ -723,15 +882,12 @@ class OffsetClip:
 		return x[torch.arange(offset, offset + n_frames * step, step, device=x.device, dtype=torch.int) % frame_count]
 
 # Custom transform for frame resampling with non-uniform random steps between frames
-class NonUniformFrameSample:
+class JitteredFrameSampling:
 	def __init__(self, step):
 		self.step = step
 
 	def __call__(self, x):
-		frame_count = x.shape[0]
-		clip_len = frame_count // self.step + (1 if frame_count % self.step > 0 else 0)
-		idx = torch.randint(0, self.step, [clip_len], device=x.device, dtype=torch.int) + self.step * torch.arange(0, clip_len, device=x.device, dtype=torch.int)
-		return x[idx.clamp_max(frame_count - 1)]
+		return frame_subsample(x, step=self.step, jitter=self.step)
 
 # Custom transform for flipping video tensor along the temporal dimension, so that the video looks played backward
 class RandomTimeFlip:
@@ -798,6 +954,17 @@ class TimeDiff:
 		for i in range(1, T):
 			x[T - i] -= x[T - i - 1]
 		return x
+
+# Extract multiple crops from tensor and concatenate them along channel dimension
+class MultiCrop:
+	def __init__(self, num_space_crops=3, num_time_crops=10):
+		self.num_space_crops = num_space_crops
+		self.num_time_crops = num_time_crops
+
+	def __call__(self, x):
+		crops = torch.cat([temporal_crop(x, k, self.num_time_crops) for k in range(self.num_time_crops)], dim=0)
+		crops = torch.cat([spatial_crop(crops, k, self.num_space_crops) for k in range(self.num_space_crops)], dim=0)
+		return crops
 
 # Custom transform for augmenting video frame channels with optical flow information
 class OpticalFlow:

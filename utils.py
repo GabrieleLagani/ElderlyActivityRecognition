@@ -56,9 +56,12 @@ def shape2size(shape):
 # Returns padding size corresponding to padding "same" for a given kernel size
 def get_padding_same(kernel_size):
 	kernel_size = _triple(kernel_size)
-	#if any(k % 2 == 0 for k in kernel_size): raise ValueError("Padding same mode only available for odd-sized kernels, but found {}".format(kernel_size))
 	return [(k - 1) // 2 for k in kernel_size]
-	#return 'same'
+
+# Returns output size after convolution
+def get_conv_output_size(input_size, kernel_size, stride=1, padding=0):
+	if padding == 'same': padding = get_padding_same(kernel_size)[0]
+	return ((input_size + 2*padding + kernel_size) / stride) + 1
 
 # Save data to csv file
 def update_csv(results, path):
@@ -74,6 +77,7 @@ def update_iter_csv(iter_id, result, path, ci_levels=(0.9, 0.95, 0.98, 0.99, 0.9
 	AVG_KEY = 'AVG'
 	CI_KEYS = {ci_lvl: str(ci_lvl*100) + "% CI" for ci_lvl in ci_levels}
 	HEADER = ('ITER_ID', 'RESULT')
+	os.makedirs(os.path.dirname(path), exist_ok=True)
 	d = {}
 	try:
 		with open(path, 'r') as csv_file:
@@ -217,4 +221,5 @@ def get_fmap_shape(model):
 		x = model.forward_features(x)
 		model.train(model_state)
 		return x.shape[1:]
+
 

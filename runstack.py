@@ -19,9 +19,12 @@ if __name__ == "__main__":
 	args = parser.parse_args()
 	
 	stack = utils.retrieve(args.stack)
-	
+
+	failed_configs = []
 	for exp in stack:
-		run_experiment(config=exp.get('config', P.DEFAULT_CONFIG),
+		print()
+		try:
+			run_experiment(config=exp.get('config', P.DEFAULT_CONFIG),
 		               mode=exp.get('mode', args.mode),
 		               device=exp.get('device', args.device),
 		               restart=exp.get('restart', args.restart),
@@ -31,3 +34,13 @@ if __name__ == "__main__":
 		               datafolder=exp.get('datafolder', args.datafolder),
 		               fragsize=exp.get('fragsize', args.fragsize)
 	               )
+		except KeyboardInterrupt as e:
+			print(e)
+			exit()
+		except Exception as e:
+			print(e)
+			failed_configs.append(exp.get('config', P.DEFAULT_CONFIG))
+		if len(failed_configs) > 0: print("The following configurations did not complete successfully: {}".format(failed_configs))
+
+	print("\nFinished!")
+
