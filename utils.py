@@ -61,7 +61,7 @@ def get_padding_same(kernel_size):
 # Returns output size after convolution
 def get_conv_output_size(input_size, kernel_size, stride=1, padding=0):
 	if padding == 'same': padding = get_padding_same(kernel_size)[0]
-	return ((input_size + 2*padding + kernel_size) / stride) + 1
+	return ((input_size + 2*padding - kernel_size) // stride) + 1
 
 # Save data to csv file
 def update_csv(results, path):

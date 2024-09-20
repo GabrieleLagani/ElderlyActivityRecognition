@@ -13,18 +13,11 @@ import params as P
 import utils
 
 
-# TODO: Add relative and rotary position embeddings
-# TODO: CA3D
-#   - Experiments on trade-off between performance and subsampling at initial stages
-#   - Experiments on trade-off between performance and efficiency varying head size, head number, and network depth
-#   - Experiments with different normalization and position embedding methods
-# TODO: Schinet
-#   - Mixed resolution encoding
-#   - Normalization and position embeddings in chistream
-#   - Backbone
-#   - Testing and experimenting
+# TODO: Quadratic quantization
 # TODO: Add movinet
-# TODO: Add optical flow preprocessing.
+# TODO: Models to torch hub
+# TODO: Class tokens and position embeddings in custom attention modules
+# TODO: Add optical flow preprocessing
 
 
 class WarmUpMultiStepLR:
@@ -206,7 +199,7 @@ class Experiment:
 		if saved_state is not None: self.optimizer.load_state_dict(saved_state['opt_dict'])
 		#self.scheduler = optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=self.sched_milestones, gamma=self.sched_decay)
 		lr_lambda = WarmUpMultiStepLR(warmup_epochs=self.warmup_epochs, warmup_gamma=self.warmup_gamma, milestones=self.sched_milestones, gamma=self.sched_decay)
-		self.scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_lambda, last_epoch=saved_state['sched_dict']['last_epoch'])
+		self.scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_lambda, last_epoch=(saved_state['sched_dict']['last_epoch'] if saved_state is not None else -1))
 		#if saved_state is not None: self.scheduler.load_state_dict(saved_state['sched_dict'])
 
 	def save_results(self):
