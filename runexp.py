@@ -251,7 +251,7 @@ class Experiment:
 
 		# Check for errors in the computation
 		if math.isnan(loss):
-			#utils.save_dict({'inputs': inputs, 'labels': labels, 'model': self.model.state_dict()}, 'debug/faulty.py')
+			#utils.save_dict({'inputs': inputs, 'labels': labels, 'model': self.model.state_dict()}, '.debug/faulty.py')
 			nan_params = [n for n, p in self.model.named_parameters() if torch.any(torch.isnan(p))]
 			if len(nan_params) > 0:
 				raise ValueError("Loss is nan. The following params in the model were found to be nan: " + str(nan_params))

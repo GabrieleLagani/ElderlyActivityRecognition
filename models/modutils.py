@@ -34,6 +34,12 @@ def merge_heads(x):
 	B, H, N, C = x.shape
 	return x.permute(0, 2, 3, 1).reshape(B, N, C*H)
 
+def merge_heads_and_channels(x):
+	return x.transpose(0, -1).reshape(x.shape[-1]*x.shape[1], *x.shape[2:-1], x.shape[0]).transpose(0, -1)
+
+def restore_heads_and_channels(x, headsize):
+	return x.transpose(0, -1).reshape(headsize, -1, *x.shape[1:-1], x.shape[0]).transpose(0, -1)
+
 def normalize_ksp3d(kernel_size, stride, padding, token_dim=None, transposed=False):
 	token_dim = token_dim if token_dim is None or isinstance(token_dim, (list, tuple)) else [token_dim]
 	kernel_size = [(k if (token_dim is None or (i + 2) in token_dim) else 1) for i, k in enumerate(_triple(kernel_size))]
@@ -47,11 +53,11 @@ def unfold(x, kernel_size=3, stride=1, padding=0):
 	stride = _triple(stride)
 	B, C, T, H, W = x.shape
 	x = torch.conv3d(x.reshape(-1, 1, T, H, W),
-	                 torch.eye(utils.shape2size(kernel_size),
-	                           device=x.device,
-	                           dtype=x.dtype).reshape(utils.shape2size(kernel_size), 1, *kernel_size),
-	                 padding=padding,
-	                 stride=stride)
+					 torch.eye(utils.shape2size(kernel_size),
+							   device=x.device,
+							   dtype=x.dtype).reshape(utils.shape2size(kernel_size), 1, *kernel_size),
+					 padding=padding,
+					 stride=stride)
 	return x.reshape(B, -1, *x.shape[2:])
 
 def fold(x, kernel_size=3, stride=1):
@@ -59,14 +65,60 @@ def fold(x, kernel_size=3, stride=1):
 	stride = _triple(stride)
 	B, C, T, H, W = x.shape
 	x = torch.conv_transpose3d(x.reshape(-1, utils.shape2size(kernel_size), T, H, W),
-			      torch.eye(utils.shape2size(kernel_size),
-			                device=x.device,
-			                dtype=x.dtype).reshape(utils.shape2size(kernel_size), 1, *kernel_size),
-			      stride=stride)
+				  torch.eye(utils.shape2size(kernel_size),
+							device=x.device,
+							dtype=x.dtype).reshape(utils.shape2size(kernel_size), 1, *kernel_size),
+				  stride=stride)
 	return x.reshape(B, -1, *x.shape[2:])
 
 def gauss(x):
 	return torch.exp(-(x**2).sum(dim=-1, keepdim=True))
+
+def get_3d_sincos_pos_embed(embed_dim, shape):
+	embed_dim_spatial = 2 * embed_dim // 3
+	embed_dim_temporal = embed_dim - embed_dim_spatial
+
+	# spatial
+	grid_h_size = shape[1]
+	grid_h = torch.arange(grid_h_size).float() / grid_h_size
+
+	grid_w_size = shape[2]
+	grid_w = torch.arange(grid_w_size).float() / grid_w_size
+
+	grid = torch.meshgrid(grid_w, grid_h, indexing="ij")
+	grid = torch.stack(grid, dim=0)
+	grid = grid.reshape([2, 1, grid_h_size, grid_w_size])
+
+	emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim_spatial // 2, grid[0])
+	emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim_spatial // 2, grid[1])
+	pos_embed_spatial = torch.cat([emb_h, emb_w], dim=1)
+
+	# temporal
+	t_size = shape[0]
+	grid_t = torch.arange(t_size).float() / t_size
+	pos_embed_temporal = get_1d_sincos_pos_embed_from_grid(embed_dim_temporal, grid_t)
+
+	pos_embed_temporal = torch.repeat_interleave(pos_embed_temporal.unsqueeze(1), grid_h_size * grid_w_size, dim=1)
+	pos_embed_spatial = torch.repeat_interleave(pos_embed_spatial.unsqueeze(0), t_size, dim=0)
+
+	pos_embed = torch.cat([pos_embed_temporal, pos_embed_spatial], dim=-1)
+	pos_embed = pos_embed.reshape(-1, embed_dim)
+
+	return pos_embed
+
+def get_1d_sincos_pos_embed_from_grid(embed_dim, pos, base=10000.):
+	omega = torch.arange(embed_dim // 2).float()
+	omega /= embed_dim / 2.0
+	omega = 1.0 / base**omega
+
+	pos = pos.reshape(-1)
+	out = pos.unsqueeze(1) * omega.unsqueeze(0)
+
+	emb_sin = torch.sin(out)
+	emb_cos = torch.cos(out)
+
+	emb = torch.cat([emb_sin, emb_cos], dim=1)
+	return emb
 
 
 class Tokenizer:
@@ -96,9 +148,9 @@ class Tokenizer:
 
 	def untokenize(self, x):
 		x = x.reshape(self.shape[0],
-		              *(self.shape[d] for d in self.batch_dim),
-		              *(self.shape[d] for d in self.token_dim),
-		              -1).permute(0, -1, *(i + 1 for i in self.inv_perm))
+					  *(self.shape[d] for d in self.batch_dim),
+					  *(self.shape[d] for d in self.token_dim),
+					  -1).permute(0, -1, *(i + 1 for i in self.inv_perm))
 		return x
 
 
@@ -185,7 +237,7 @@ class SplitIdentity(nn.Module):
 
 class MultiHeadLinear(nn.Module):
 	def __init__(self, in_features=512, out_features=512, heads=1, headsize=512, shared_map=False, bias=True,
-	             token_dim=None, transposed=False):
+				 token_dim=None, transposed=False):
 		super().__init__()
 		self.in_features = in_features
 		self.out_features = out_features
@@ -210,7 +262,7 @@ class MultiHeadLinear(nn.Module):
 
 	def new(self):
 		return MultiHeadLinear(self.in_features, self.out_features, self.heads, self.headsize, shared_map=self.shared_map,
-		                       bias=self.use_bias, token_dim=self.token_dim, transposed=self.transposed)
+							   bias=self.use_bias, token_dim=self.token_dim, transposed=self.transposed)
 
 	def apply_filters(self, x):
 		x = x.matmul(self.weight.unsqueeze(0).transpose(-2, -1))
@@ -233,34 +285,34 @@ class MultiHeadLinear(nn.Module):
 
 class MultiHeadConv3d(MultiHeadLinear):
 	def __init__(self, in_channels=512, out_channels=512, heads=1, headsize=512, shared_map=False, bias=True,
-	             kernel_size=3, stride=1, padding=0, token_dim=None, transposed=False):
+				 kernel_size=3, stride=1, padding=0, token_dim=None, transposed=False):
 		self.in_channels = in_channels
 		self.out_channels = out_channels
 		self.kernel_size, self.stride, self.padding = normalize_ksp3d(kernel_size, stride, padding, token_dim, transposed)
 		in_features = self.in_channels if transposed else self.in_channels * utils.shape2size(self.kernel_size)
 		out_features = self.out_channels
 		super().__init__(in_features, out_features, heads, headsize*utils.shape2size(self.kernel_size), shared_map=shared_map,
-		                 bias=bias, token_dim=token_dim, transposed=transposed)
+						 bias=bias, token_dim=token_dim, transposed=transposed)
 		self.headsize = headsize if self.transposed else self.in_channels
 
 	def new(self):
 		return MultiHeadConv3d(self.in_channels, self.out_channels, self.heads, self.headsize, shared_map=self.shared_map,
-		                       bias=self.use_bias, kernel_size=self.kernel_size, stride=self.stride, padding=self.padding,
-		                       token_dim=self.token_dim, transposed=self.transposed)
+							   bias=self.use_bias, kernel_size=self.kernel_size, stride=self.stride, padding=self.padding,
+							   token_dim=self.token_dim, transposed=self.transposed)
 
 	def apply_conv_filters(self, x):
 		w = self.weight.reshape(self.weight.shape[0] * self.weight.shape[1], self.in_channels, *self.kernel_size)
 		b = self.bias.reshape(-1) if self.use_bias else None
 		if self.shared_map:
 			out = torch.conv3d(x.reshape(x.shape[0], self.headsize, -1, *x.shape[2:]).transpose(1, 2).reshape(-1, self.headsize, *x.shape[2:]),
-			                   w, bias=b, stride=self.stride, padding=self.padding)
+							   w, bias=b, stride=self.stride, padding=self.padding)
 			out = out.reshape(x.shape[0], -1, out.shape[1], *out.shape[2:]).transpose(1, 2).reshape(x.shape[0], -1, *out.shape[2:])
 		else:
 			if (self.heads * self.headsize) % x.shape[1] != 0:
 				raise RuntimeError("Expected number of channels ({}) is not divisible by input channels ({})".format(self.heads * self.headsize, x.shape[1]))
 			x = x.repeat_interleave((self.heads * self.headsize) // x.shape[1], dim=1)
 			out = torch.conv3d(x.reshape(x.shape[0], self.headsize, -1, *x.shape[2:]).transpose(1, 2).reshape(x.shape[0], -1, *x.shape[2:]),
-			                   w, bias=b, stride=self.stride, padding=self.padding, groups=self.heads)
+							   w, bias=b, stride=self.stride, padding=self.padding, groups=self.heads)
 			out = out.reshape(x.shape[0], -1, self.weight.shape[1], *out.shape[2:]).transpose(1, 2).reshape(x.shape[0], -1, *out.shape[2:])
 		return out
 
@@ -322,10 +374,28 @@ class PosEmbedding(nn.Module):
 				return x[:, :, :, idx] if self.transposed else x[:, :, idx, :]
 			self.cape_reg_buff = -self.cape_reg * (torch.norm(
 				pos_emb.clone().detach() - permute_tokens(self.apply_pos_embed(permute_tokens(x.clone().detach(), idx)), inv_idx),
-			    p=2, dim=token_dim)**2).sum()
+				p=2, dim=token_dim)**2).sum()
 		else: self.cape_reg_buff = 0
 
 		return self.tokenizer.untokenize(merge_heads(pos_emb))
+
+class SinCosPosEmbedding(PosEmbedding):
+	def __init__(self, shape, channels=64, heads=8, shared_map=False, token_dim=None, transposed=False, cape_reg=0):
+		self.shape = shape
+		super().__init__(size=shape, channels=channels, heads=heads, shared_map=shared_map, token_dim=token_dim, transposed=transposed, cape_reg=cape_reg)
+
+	def init_filters(self):
+		num_banks = 1 if self.shared_map else self.heads
+		pos_embed = get_3d_sincos_pos_embed(
+			embed_dim=num_banks * self.channels,
+			shape=self.shape
+		)
+		self.pos_embed = nn.Parameter(pos_embed, requires_grad=True)
+
+class AppendedPosEmbedding(PosEmbedding):
+	def apply_pos_embed(self, x):
+		B, H, N, C = x.shape
+		return torch.cat([x, self.pos_embed.reshape(1, -1, C, N).transpose(-2, -1)], dim=-1)
 
 class MultiplicativePosEmbedding(PosEmbedding):
 	def __init__(self, size, channels=64, heads=8, shared_map=False, token_dim=None, transposed=False, cape_reg=0):
@@ -356,7 +426,7 @@ class AffinePosEmbedding(PosEmbedding):
 
 	def new(self):
 		return AffinePosEmbedding(self.size, self.in_features, self.out_features, self.heads, shared_map=self.shared_map,
-		                          token_dim=self.token_dim, transposed=self.transposed, cape_reg=self.cape_reg)
+								  token_dim=self.token_dim, transposed=self.transposed, cape_reg=self.cape_reg)
 
 	def apply_pos_embed(self, x):
 		B, H, N, C = x.shape
@@ -379,7 +449,7 @@ class NonlinearPosEmbedding(AffinePosEmbedding):
 
 	def new(self):
 		return NonlinearPosEmbedding(self.size, self.in_features, self.out_features, self.heads, shared_map=self.shared_map,
-		                             nonlin=self.nonlin.new(), token_dim=self.token_dim, transposed=self.transposed, cape_reg=self.cape_reg)
+									 nonlin=self.nonlin.new(), token_dim=self.token_dim, transposed=self.transposed, cape_reg=self.cape_reg)
 
 	def apply_pos_embed(self, x):
 		B, H, N, C = x.shape
@@ -389,12 +459,87 @@ class NonlinearPosEmbedding(AffinePosEmbedding):
 		if self.transposed: x.reshape(x.shape[0], x.shape[1], x.shape[2], -1, self.in_features).transpose(-2, -3).reshape(x.shape[0], x.shape[1], -1, self.in_features).transpose(-2, -1)
 		return x
 
+class RotaryPosEmbedding(nn.Module):
+	def __init__(self, dim, n=4096, base=10000):
+		super().__init__()
+
+		self.dim = dim
+		self.base = base
+		self.n = n
+
+		self.build_rope(self.n)
+
+	def build_rope(self, n):
+
+		# Create theta values as 1/base^k for k = 0/dim, 2/dim, ... dim/dim=1
+		theta = 1.0 / ( self.base ** (torch.arange(0, self.dim, 2)[: (self.dim // 2)].float() / self.dim) )
+
+		# Create position indexes `[0, 1, ..., max_seq_len - 1]`
+		seq_idx = torch.arange(n, dtype=theta.dtype, device=theta.device)
+
+		# Outer product of theta and position index; output tensor has a shape of [max_seq_len, dim // 2]
+		idx_theta = (seq_idx.unsqueeze(1) * theta.unsqueeze(0)).float()
+
+		# rope includes both the cos and sin components and so the output shape is [max_seq_len, dim // 2, 2]
+		rope = torch.stack([torch.cos(idx_theta), torch.sin(idx_theta)], dim=-1)
+		self.rope = nn.Parameter(rope, requires_grad=True)
+
+	def forward(self, x):
+		seq_len = x.shape[1]
+		xshaped = x.float().reshape(*x.shape[:-1], -1, 2)
+		rope = self.rope.view(-1, xshaped.size(1), 1, xshaped.size(3), 2)
+		x_out = torch.stack([
+				xshaped[..., 0] * rope[..., 0] - xshaped[..., 1] * rope[..., 1],
+				xshaped[..., 1] * rope[..., 0] + xshaped[..., 0] * rope[..., 1],
+			], dim=-1)
+
+		x_out = x_out.flatten(3)
+		return x_out.type_as(x)
+
+class RelativePosEmbedding(nn.Module):
+	def __init__(self, num_heads, window_shape):
+		super().__init__()
+
+		self.num_heads = num_heads
+		self.window_shape = window_shape
+		M = (2 * window_shape[0] - 1) * (2 * window_shape[1] - 1) * (2 * window_shape[2] - 1)
+
+		# Assign 3D coordinates to each window location
+		coords_t = torch.arange(self.window_shape[0])
+		coords_h = torch.arange(self.window_shape[1])
+		coords_w = torch.arange(self.window_shape[2])
+		coords = torch.stack(torch.meshgrid(coords_t, coords_h, coords_w, indexing='ij'))
+
+		# Compute relative positions for each pair of window locations
+		rel_pos = coords.reshape(3, -1, 1) - coords.reshape(3, 1, -1)
+
+		# Assign each relative position to an index between 0 and M
+		rel_pos_idx = self.rel_pos2idx(rel_pos)
+		self.register_buffer("rel_pos_idx", rel_pos_idx.reshape(*self.window_shape, *self.window_shape))
+
+		# relative positional embeddings
+		rel_pos_emb = utils.trunc_normal_(torch.empty(num_heads, M), std=.02)
+		self.rel_pos_embed = nn.Parameter(rel_pos_emb)
+
+	def rel_pos2idx(self, rel_pos):
+		# shift relative position coordinates to start from 0
+		for i in range(len(self.window_shape)): rel_pos[i] += self.window_shape[i] - 1
+
+		# reweight relative coordinate offsets
+		rel_pos[0] *= (2 * self.window_shape[1] - 1) * (2 * self.window_shape[2] - 1)
+		rel_pos[1] *= (2 * self.window_shape[2] - 1)
+
+		return rel_pos.sum(0)
+
+	def forward(self, x, bound_window_shape=(2, 7, 7)):
+		T, H, W = bound_window_shape
+		rel_pos_idx = self.rel_pos_idx[:T, :H, :W, :T, :H, :W].reshape(-1)
+		return x + self.rel_pos_embed[:, rel_pos_idx].reshape(1, *x.shape[1:])
 
 class Attention(nn.Module):
 	QKV_SPLITS = 3
 
-	def __init__(self, channels=64, heads=8, token_dim=None, transposed=False, qkv=None, qkv_splits=None,
-	             proj=None, attn_drop=0., proj_drop=0.):
+	def __init__(self, channels=64, heads=8, token_dim=None, transposed=False, qkv=None, qkv_splits=None, proj=None, attn_drop=0., proj_drop=0.):
 		super().__init__()
 
 		self.token_dim = token_dim if token_dim is None or isinstance(token_dim, (list, tuple)) else [token_dim]
@@ -414,8 +559,8 @@ class Attention(nn.Module):
 
 	def new(self):
 		return Attention(self.channels, self.heads, token_dim=self.token_dim, transposed=self.transposed,
-		                 qkv=self.qkv.new(), qkv_splits=self.qkv_splits,
-		                 proj=self.proj.new(), attn_drop=self.attn_drop.p, proj_drop=self.proj_drop.p)
+						 qkv=self.qkv.new(), qkv_splits=self.qkv_splits,
+						 proj=self.proj.new(), attn_drop=self.attn_drop.p, proj_drop=self.proj_drop.p)
 
 	def aggregate(self, qkv):
 		q, k, v = qkv
@@ -436,11 +581,15 @@ class Attention(nn.Module):
 		x = self.proj_drop(self.proj(self.attn_drop(x)))
 		return x
 
+class AttentionWithRelPosEmb(Attention):
+	def __init__(self):
+		raise NotImplemented
+
 class KernelAttention(Attention):
 	def __init__(self, channels=64, heads=8, features=64, knl_size=64, token_dim=None, transposed=False, qkv=None, qkv_splits=None,
-	             proj=None, attn_drop=0., proj_drop=0.):
+				 proj=None, attn_drop=0., proj_drop=0.):
 		super().__init__(channels, heads, token_dim=token_dim, transposed=transposed, qkv=qkv, qkv_splits=qkv_splits,
-		                 proj=proj, attn_drop=attn_drop, proj_drop=proj_drop)
+						 proj=proj, attn_drop=attn_drop, proj_drop=proj_drop)
 		self.features = features if self.transposed else self.channels
 		self.knl_size = knl_size
 		r = nn.init.xavier_normal_(torch.empty(self.knl_size, self.features))
@@ -448,8 +597,8 @@ class KernelAttention(Attention):
 
 	def new(self):
 		return KernelAttention(self.channels, self.heads, features=self.features, knl_size=self.knl_size,
-		                       token_dim=self.token_dim, transposed=self.transposed, qkv=self.qkv, qkv_splits=self.qkv_splits,
-		                       proj=self.proj.new(), attn_drop=self.attn_drop.p, proj_drop=self.proj_drop.p)
+							   token_dim=self.token_dim, transposed=self.transposed, qkv=self.qkv, qkv_splits=self.qkv_splits,
+							   proj=self.proj.new(), attn_drop=self.attn_drop.p, proj_drop=self.proj_drop.p)
 
 	def aggregate(self, qkv):
 		q, k, v = qkv
@@ -462,9 +611,9 @@ class HiddenRankAttention(Attention):
 	QKV_SPLITS = 5
 
 	def __init__(self, channels=64, heads=8, features=64, hidden_rank=64, token_dim=None, transposed=False, qkv=None, qkv_splits=None,
-	             proj=None, attn_drop=0., proj_drop=0.):
+				 proj=None, attn_drop=0., proj_drop=0.):
 		super().__init__(channels, heads, token_dim=token_dim, transposed=transposed, qkv=qkv, qkv_splits=qkv_splits,
-		                 proj=proj, attn_drop=attn_drop, proj_drop=proj_drop)
+						 proj=proj, attn_drop=attn_drop, proj_drop=proj_drop)
 		self.features = features if self.transposed else channels
 		self.hidden_rank = hidden_rank
 		self.k_aggr = TokenAggregator(self.hidden_rank, self.features, self.heads, shared_map=True)
@@ -472,10 +621,10 @@ class HiddenRankAttention(Attention):
 
 	def new(self):
 		return HiddenRankAttention(self.channels, self.heads,
-		                           features=self.features, hidden_rank=self.hidden_rank,
-		                           token_dim=self.token_dim, transposed=self.transposed,
-		                           qkv=self.qkv.new(), qkv_splits=self.qkv_splits,
-		                           proj=self.proj.new(), attn_drop=self.attn_drop.p, proj_drop=self.proj_drop.p)
+								   features=self.features, hidden_rank=self.hidden_rank,
+								   token_dim=self.token_dim, transposed=self.transposed,
+								   qkv=self.qkv.new(), qkv_splits=self.qkv_splits,
+								   proj=self.proj.new(), attn_drop=self.attn_drop.p, proj_drop=self.proj_drop.p)
 
 	def aggregate(self, qkv):
 		q, k_k, k_v, v_k, v_v = qkv
@@ -483,17 +632,17 @@ class HiddenRankAttention(Attention):
 
 class LocalAttention(Attention):
 	def __init__(self, channels=64, heads=8, kernel_size=3, stride=1, padding=0, token_dim=None, transposed=False, refold=True,
-	             qkv=None, qkv_splits=None, proj=None, attn_drop=0., proj_drop=0.):
+				 qkv=None, qkv_splits=None, proj=None, attn_drop=0., proj_drop=0.):
 		self.kernel_size, self.stride, self.padding = normalize_ksp3d(kernel_size, stride, padding, token_dim, transposed)
 		self.refold = refold
 		super().__init__(channels, heads, token_dim=token_dim, transposed=transposed, qkv=qkv, qkv_splits=qkv_splits,
-		                 proj=proj, attn_drop=attn_drop, proj_drop=proj_drop)
+						 proj=proj, attn_drop=attn_drop, proj_drop=proj_drop)
 
 	def new(self):
 		return LocalAttention(self.channels, self.heads, kernel_size=self.kernel_size, stride=self.stride, padding=self.padding,
-		                      token_dim=self.token_dim, transposed=self.transposed, refold=self.refold,
-		                      qkv=self.qkv.new(), qkv_splits=self.qkv_splits,
-		                      proj=self.proj.new(), attn_drop=self.attn_drop.p, proj_drop=self.proj_drop.p)
+							  token_dim=self.token_dim, transposed=self.transposed, refold=self.refold,
+							  qkv=self.qkv.new(), qkv_splits=self.qkv_splits,
+							  proj=self.proj.new(), attn_drop=self.attn_drop.p, proj_drop=self.proj_drop.p)
 
 	def attend(self, qkv):
 		q, k, v = qkv
@@ -545,7 +694,7 @@ class AttentiveBias(nn.Module):
 
 	def new(self):
 		return AttentiveBias(self.channels, self.heads, self.headsize, shared_map=self.shared_map, transposed=self.transposed,
-		                     qkv=self.qkv.new(), qkv_splits=self.qkv_splits)
+							 qkv=self.qkv.new(), qkv_splits=self.qkv_splits)
 
 	def get_bias(self, x):
 		qkv = channel_split(self.qkv(x), self.qkv_splits)
@@ -563,27 +712,27 @@ class AttentiveConv3d(MultiHeadConv3d):
 	QKV_SPLITS = 2
 
 	def __init__(self, in_channels=64, out_channels=64, heads=8, headsize=64, shared_map=False, bias=True,
-	             kernel_size=3, stride=1, padding=0, token_dim=None, transposed=False,
-	             qkv=None, qkv_splits=None, qkv_b=None, qkv_b_splits=None):
+				 kernel_size=3, stride=1, padding=0, token_dim=None, transposed=False,
+				 qkv=None, qkv_splits=None, qkv_b=None, qkv_b_splits=None):
 		self.qkv_splits = qkv_splits if qkv_splits is not None else [headsize * heads for _ in range(self.QKV_SPLITS)]
 		if len(self.qkv_splits) != self.QKV_SPLITS: raise ValueError("Expected {} splits for QKV mapping, but {} were found".format(self.QKV_SPLITS, len(self.qkv_splits)))
 		self.qkv = qkv if qkv is not None else SplitIdentity(self.QKV_SPLITS)
 		self.qkv_b = qkv_b
 		self.qkv_b_splits = qkv_b_splits
 		super().__init__(in_channels, out_channels, heads, headsize, shared_map=shared_map, bias=bias,
-		                 kernel_size=kernel_size, stride=stride, padding=padding, token_dim=token_dim, transposed=transposed)
+						 kernel_size=kernel_size, stride=stride, padding=padding, token_dim=token_dim, transposed=transposed)
 
 	def init_filters(self):
 		channels = self.in_channels if self.transposed else self.in_channels * utils.shape2size(self.kernel_size)
 		self.aggr = TokenAggregator(self.out_channels, channels, self.heads, self.shared_map, self.transposed)
 		self.bias = AttentiveBias(self.out_channels, self.heads, self.headsize, shared_map=self.shared_map,
-		                          transposed=self.transposed, qkv=self.qkv_b, qkv_splits=self.qkv_b_splits) if self.use_bias else None
+								  transposed=self.transposed, qkv=self.qkv_b, qkv_splits=self.qkv_b_splits) if self.use_bias else None
 
 	def new(self):
 		return AttentiveConv3d(self.in_channels, self.out_channels, self.heads, self.headsize, shared_map=self.shared_map,
-		                       bias=self.use_bias, kernel_size=self.kernel_size, stride=self.stride, padding=self.padding,
-		                       token_dim=self.token_dim, transposed=self.transposed,
-		                       qkv=self.qkv.new(), qkv_splits=self.qkv_splits, qkv_b=self.qkv_b, qkv_b_splits=self.qkv_b_splits)
+							   bias=self.use_bias, kernel_size=self.kernel_size, stride=self.stride, padding=self.padding,
+							   token_dim=self.token_dim, transposed=self.transposed,
+							   qkv=self.qkv.new(), qkv_splits=self.qkv_splits, qkv_b=self.qkv_b, qkv_b_splits=self.qkv_b_splits)
 
 	def get_weight(self, x):
 		qkv = channel_split(self.qkv(x), self.qkv_splits)
@@ -613,11 +762,11 @@ class AttentivePool3d(LocalAttention):
 	QKV_SPLITS = 2
 
 	def __init__(self, size=1, channels=64, heads=8, shared_map=False,
-	             kernel_size=3, stride=1, padding=0, token_dim=None, transposed=False, refold=True,
-	             qkv=None, qkv_splits=None, proj=None, attn_drop=0., proj_drop=0.):
+				 kernel_size=3, stride=1, padding=0, token_dim=None, transposed=False, refold=True,
+				 qkv=None, qkv_splits=None, proj=None, attn_drop=0., proj_drop=0.):
 		super().__init__(channels, heads, kernel_size=kernel_size, stride=stride, padding=padding,
-		                 token_dim=token_dim, transposed=transposed, refold=refold, qkv=qkv, qkv_splits=qkv_splits,
-		                 proj=proj, attn_drop=attn_drop, proj_drop=proj_drop)
+						 token_dim=token_dim, transposed=transposed, refold=refold, qkv=qkv, qkv_splits=qkv_splits,
+						 proj=proj, attn_drop=attn_drop, proj_drop=proj_drop)
 
 		self.size = size
 		if self.transposed and (any(k < 0 for k in self.kernel_size) or any(s < 0 for s in self.stride)):
@@ -628,10 +777,10 @@ class AttentivePool3d(LocalAttention):
 
 	def new(self):
 		return AttentivePool3d(self.size, self.channels, self.heads, shared_map=self.shared_map,
-		                       kernel_size=self.kernel_size, stride=self.stride, padding=self.padding,
-		                       token_dim=self.token_dim, transposed=self.transposed, refold=self.refold,
-		                       qkv=self.qkv.new(), qkv_splits=self.qkv_splits,
-		                       proj=self.proj.new(), attn_drop=self.attn_drop.p, proj_drop=self.proj_drop.p)
+							   kernel_size=self.kernel_size, stride=self.stride, padding=self.padding,
+							   token_dim=self.token_dim, transposed=self.transposed, refold=self.refold,
+							   qkv=self.qkv.new(), qkv_splits=self.qkv_splits,
+							   proj=self.proj.new(), attn_drop=self.attn_drop.p, proj_drop=self.proj_drop.p)
 
 	def aggregate(self, qkv):
 		k, v = qkv
@@ -676,7 +825,7 @@ class AttentionConv3dBlock(nn.Module):
 
 class MultiHeadMLP(MultiHeadLinear):
 	def __init__(self, in_features=512, hidden_features=512, out_features=512, heads=1, headsize=512, shared_map=False, bias=True,
-	             hidden_layers=1, recurrent=False, act=nn.ReLU(), norm=BatchNorm, norm_before_act=False, token_dim=None, transposed=False, drop=0.):
+				 hidden_layers=1, recurrent=False, act=nn.ReLU(), norm=BatchNorm, norm_before_act=False, token_dim=None, transposed=False, drop=0.):
 		self.hidden_features = hidden_features
 		self.hidden_layers = hidden_layers
 		self.recurrent = recurrent
@@ -687,7 +836,7 @@ class MultiHeadMLP(MultiHeadLinear):
 		self.norm_layers = None
 		self.drop = nn.Dropout(drop)
 		super().__init__(in_features, out_features, heads, headsize, shared_map=shared_map,
-		                 bias=bias, token_dim=token_dim, transposed=transposed)
+						 bias=bias, token_dim=token_dim, transposed=transposed)
 
 	def init_filters(self):
 		self.layer_list = nn.ModuleList()
@@ -705,9 +854,9 @@ class MultiHeadMLP(MultiHeadLinear):
 
 	def new(self):
 		return MultiHeadMLP(self.in_features, self.hidden_features, self.out_features, self.heads, self.headsize, shared_map=self.shared_map,
-		                    bias=self.use_bias, hidden_layers=self.hidden_layers, recurrent=self.recurrent,
-		                    act=self.act, norm=self.norm, norm_before_act=self.norm_before_act,
-		                    token_dim=self.token_dim, transposed=self.transposed, drop=self.drop.p)
+							bias=self.use_bias, hidden_layers=self.hidden_layers, recurrent=self.recurrent,
+							act=self.act, norm=self.norm, norm_before_act=self.norm_before_act,
+							token_dim=self.token_dim, transposed=self.transposed, drop=self.drop.p)
 
 	def forward(self, x):
 		for l in range(len(self.layer_list)):
@@ -764,7 +913,7 @@ class MultiHeadResBlock(nn.Module):
 
 class CBlock(nn.Module):
 	def __init__(self, in_channels=512, out_channels=512, heads=1,
-	             conv=None, proj=None, act=nn.ReLU(), norm=BatchNorm, order='NCNAP', splits=None):
+				 conv=None, proj=None, act=nn.ReLU(), norm=BatchNorm, order='NCNAP', splits=None):
 		super().__init__()
 		self.heads = heads
 		self.in_channels = in_channels
@@ -783,7 +932,7 @@ class CBlock(nn.Module):
 
 	def new(self):
 		return CBlock(self.in_channels, self.out_channels, self.heads, conv=self.conv.new(), proj=self.proj.new(),
-		              act=self.act, norm=self.norm1.__class__, order=self.order, splits=self.splits)
+					  act=self.act, norm=self.norm1.__class__, order=self.order, splits=self.splits)
 
 	def forward(self, x):
 		res = x.clone()

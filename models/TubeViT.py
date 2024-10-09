@@ -214,7 +214,7 @@ def get_3d_sincos_pos_embed(embed_dim, tube_shape, stride, offset, kernel_size):
     grid_h = grid_h * stride[1] + offset[1] + (kernel_size[1] - 1) // 2
 
     grid_w_size = tube_shape[2]
-    grid_w = torch.arange(tube_shape[2]).float()
+    grid_w = torch.arange(grid_w_size).float()
     grid_w = grid_w * stride[2] + offset[2] + (kernel_size[2] - 1) // 2
 
     grid = torch.meshgrid(grid_w, grid_h, indexing="ij")

@@ -1,3 +1,4 @@
-from models.SChiNet import test_chistream
+from models.SChiNet import test_schinet
 
-test_chistream()
+
+test_schinet()
