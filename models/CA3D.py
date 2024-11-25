@@ -47,7 +47,7 @@ class CA3D(nn.Module):
 			conv=make_conv_layer(config, 3, 64, 1, 3, kernel_size=(k_t, 7, 7), stride=(s_t if k_t > 1 else 1, s, s), padding='same'),
 			proj=Column(MultiHeadResBlock(64, 1,
 				conv=make_conv_layer(config, 64, 64, 1, 64, kernel_size=(r_k if k_t > 1 else 1, r_k, r_k), stride=1, padding='same'),
-				act=act, norm=norm, order=res_order), depth=0, recurrent=rec_col),
+				act=act, norm=norm, order=res_order), depth=2, recurrent=rec_col),
             act=act, norm=norm, order=conv_order))
 		if k_t == 1 and s_t > 1:
 			if t_aggr in ['tconv', 'tconv_post']:
