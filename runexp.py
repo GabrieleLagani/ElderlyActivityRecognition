@@ -13,10 +13,7 @@ import params as P
 import utils
 
 
-# TODO: Quadratic quantization
-# TODO: Add movinet
 # TODO: Models to torch hub
-# TODO: Class tokens and position embeddings in custom attention modules
 # TODO: Add optical flow preprocessing
 
 
@@ -41,26 +38,143 @@ class AggregateEvaluator:
 
 	def reset(self):
 		self.outputs = torch.zeros([self.num_items, self.num_classes], dtype=P.DTYPE, device=P.DEVICE)
-		self.outputs_smax = torch.zeros_like(self.outputs)
+		self.outputs_smax = torch.zeros([self.num_items, self.num_classes], dtype=P.DTYPE, device=P.DEVICE)
 		self.labels = torch.zeros([self.num_items], dtype=torch.int64, device=P.DEVICE)
+		self.idx2row = {}
 
 	def update(self, idx, outputs, labels):
 		with torch.no_grad():
 			idx = idx // self.crops_per_item
-			self.outputs[idx] += outputs
-			self.outputs_smax[idx] += outputs.softmax(dim=1)
-			self.labels[idx] = labels
+			rows = []
+			for i in idx:
+				if i not in self.idx2row: self.idx2row[i] = len(self.idx2row)
+				rows.append(self.idx2row[i])
+			rows = torch.tensor(rows, dtype=torch.int64, device=P.DEVICE)
+			self.outputs[rows] += outputs
+			self.outputs_smax[rows] += outputs.softmax(dim=1)
+			self.labels[rows] = labels
 
 	def compute(self):
 		with torch.no_grad():
-			self.outputs = self.outputs / self.crops_per_item
-			loss = self.criterion(self.outputs, self.labels).item()
 			outputs = self.outputs
-			#outputs = self.outputs_smax
-			hits = (self.labels == torch.max(outputs, dim=1)[1]).int().sum().item()
-			hits_t5 = (self.labels.unsqueeze(-1) == outputs.topk(5, 1)[1]).int().sum().item()
-			count = len(self.labels)
+			outputs_smax = self.outputs_smax
+			labels = self.labels
+			outputs = outputs / self.crops_per_item
+			loss = self.criterion(outputs, labels).item()
+			#outputs = outputs_smax
+			hits = (labels == torch.max(outputs, dim=1)[1]).int().sum().item()
+			hits_t5 = (labels.unsqueeze(-1) == outputs.topk(5, 1)[1]).int().sum().item()
+			count = len(labels)
 			return loss, hits/count, hits_t5/count
+
+class Quantizer:
+	def __init__(self, cfg):
+
+		self.debug = True
+
+		self.config = cfg
+		self.stretch_h, self.stretch_v, self.stretch_g = self.config.get('stretch', (1, 1, 1))
+		self.precision = self.config.get('precision', 'float32')
+		if self.precision != 'float32' and P.DEVICE == 'cpu':
+			raise RuntimeError("Only float32 precision is supported when using cpu device")
+		if self.precision == 'float16': P.DTYPE = torch.float16
+		if self.precision == 'float64': P.DTYPE = torch.float64
+		self.qat = self.config.get('qat', False)
+		self.qpow = self.config.get('qpow', 1)
+		self.qaff = self.config.get('qaff', 0)
+		self.grad_diff = self.config.get('q_grad_diff', False)
+		self.preparam_precision = torch.float32 if self.qat else P.DTYPE
+
+	def _invalid_value(self, x):
+		return self.debug and x is not None and ( torch.any(x.isnan()) ) #or torch.any(x.isinf()) )
+
+	def _signed_pow(self, x, p):
+		return x.sign() * x.abs().pow(p)
+
+	def _d_signed_pow(self, x, p):
+		return p * x.abs().pow(p-1)
+
+	def _clamp(self, x, min=None, max=None):
+		x = x.clone()
+		if min is not None: x[x < min] = min
+		if max is not None: x[x > max] = max
+		return x
+
+	def _d_clamp(self, x, y, min=None, max=None):
+		x = x.clone()
+		if min is not None: x[y < min] = 0
+		if max is not None: x[y > max] = 0
+		return x
+
+	def pre_params_enabled(self):
+		return self.stretch_h != 1 or self.qat or self.qpow != 1
+
+	@torch.no_grad()
+	def param_to_pre_param(self, p):
+		out1 = ( self._signed_pow(self.stretch_h * (p - self.qaff).to(dtype=self.preparam_precision), self.qpow) if self.qpow >= 1 else
+				( (self.stretch_h**self.qpow) * self._signed_pow((p - self.qaff).to(dtype=self.preparam_precision), self.qpow) ) )
+		out1 = out1 - self._signed_pow(self.stretch_h * (torch.zeros_like(p) - self.qaff).to(dtype=self.preparam_precision), self.qpow)
+		out2 = ( self._signed_pow(self.stretch_h * (p + self.qaff).to(dtype=self.preparam_precision), self.qpow) if self.qpow >= 1 else
+				( (self.stretch_h**self.qpow) * self._signed_pow((p + self.qaff).to(dtype=self.preparam_precision), self.qpow) ) )
+		out2 = out2 - self._signed_pow(self.stretch_h * (torch.zeros_like(p) + self.qaff).to(dtype=self.preparam_precision), self.qpow)
+		out = self._clamp(out1, min=0) + self._clamp(out2, max=0)
+		return out
+
+	@torch.no_grad()
+	def _param_to_preparam_grad_diff(self, p):
+		if p.grad is None: return None
+		pre_p = self.param_to_pre_param(p)
+		if self._invalid_value(pre_p): raise RuntimeError("Pre-parameter is nan")
+
+		offs1 = self._signed_pow(self.stretch_g * (torch.zeros_like(p) - self.qaff).to(dtype=self.preparam_precision), self.qpow)
+		out1 = self._d_signed_pow(pre_p + offs1, 1/self.qpow) / self.stretch_g
+		out1 = out1 #+ self.qaff
+		offs2 = self._signed_pow(self.stretch_g * (torch.zeros_like(p) + self.qaff).to(dtype=self.preparam_precision), self.qpow)
+		out2 = self._d_signed_pow(pre_p + offs2, 1/self.qpow) / self.stretch_g
+		out2 = out2 #- self.qaff
+		out = self._d_clamp(out1, pre_p, min=0) + self._d_clamp(out2, pre_p, max=0)
+		return (p.grad.to(dtype=self.preparam_precision) / self.stretch_v) * out
+
+	@torch.no_grad()
+	def _param_to_preparam_grad(self, p):
+		if p.grad is None: return None
+		out1 = ( self._signed_pow((self.stretch_g/self.stretch_v) * (p.grad - self.qaff).to(dtype=self.preparam_precision), self.qpow) if self.qpow >= 1 else
+				( ((self.stretch_g/self.stretch_v)**self.qpow) * self._signed_pow((p.grad - self.qaff).to(dtype=self.preparam_precision), self.qpow) ) )
+		out1 = out1 - self._signed_pow(self.stretch_h * (torch.zeros_like(p) - self.qaff).to(dtype=self.preparam_precision), self.qpow)
+		out2 = ( self._signed_pow((self.stretch_g/self.stretch_v) * (p.grad + self.qaff).to(dtype=self.preparam_precision), self.qpow) if self.qpow >= 1 else
+				( ((self.stretch_g/self.stretch_v)**self.qpow) * self._signed_pow((p.grad + self.qaff).to(dtype=self.preparam_precision), self.qpow) ) )
+		out2 = out2 - self._signed_pow(self.stretch_h * (torch.zeros_like(p) + self.qaff).to(dtype=self.preparam_precision), self.qpow)
+		out = self._clamp(out1, min=0) + self._clamp(out2, max=0)
+		return out
+
+	@torch.no_grad()
+	def param_to_pre_param_grad(self, p):
+		if self._invalid_value(p.grad): raise RuntimeError("Parameter gradient is nan")
+		out = self._param_to_preparam_grad_diff(p) if self.grad_diff else self._param_to_preparam_grad(p)
+		if self._invalid_value(out): raise RuntimeError("Pre-parameter gradient is nan.")
+		return out
+
+	@torch.no_grad()
+	def pre_param_to_param(self, p):
+		if self._invalid_value(p): raise RuntimeError("Pre-parameter is nan")
+		offs1 = self._signed_pow(self.stretch_h * (torch.zeros_like(p) - self.qaff).to(dtype=self.preparam_precision), self.qpow)
+		out1 = ((self._signed_pow((p + offs1), 1 / self.qpow) / self.stretch_h) if self.qpow >= 1 else
+				self._signed_pow((p + offs1) / (self.stretch_h ** (self.qpow)), 1 / self.qpow))
+		# out1 = ( (self._signed_pow((p - offs1), 1/self.qpow) / self.stretch_h) if self.qpow >= 1 else
+		#       self._signed_pow((p - offs1) / (self.stretch_h**(self.qpow)), 1/self.qpow) )
+		out1 = out1 + self.qaff
+		offs2 = self._signed_pow(self.stretch_h * (torch.zeros_like(p) + self.qaff).to(dtype=self.preparam_precision), self.qpow)
+		out2 = ((self._signed_pow((p + offs2), 1 / self.qpow) / self.stretch_h) if self.qpow >= 1 else
+				self._signed_pow((p + offs2) / (self.stretch_h ** (self.qpow)), 1 / self.qpow))
+		out2 = out2 - self.qaff
+		# out2 = out2 + self.qaff
+		out = self._clamp(out1, min=0) + self._clamp(out2, max=0)
+		if self._invalid_value(out): raise RuntimeError("Parameter is nan")
+		return out
+
+	def rescale_loss(self, l):
+		return self.stretch_v * l
+
 
 class Experiment:
 	def __init__(self, config_name, mode, restart, seed, dataseed, token):
@@ -102,14 +216,8 @@ class Experiment:
 		self.warmup_gamma = self.config.get('warmup_gamma', 1)
 		self.pretrain_path = self.config.get('pretrain_path', None)
 
-		self.stretch_h, self.stretch_v, self.stretch_g = self.config.get('stretch', (1, 1, 1))
-		self.precision = self.config.get('precision', 'float32')
-		if self.precision != 'float32' and P.DEVICE == 'cpu':
-			raise RuntimeError("Only float32 precision is supported when using cpu device")
-		if self.precision == 'float16': P.DTYPE = torch.float16
-		if self.precision == 'float64': P.DTYPE = torch.float64
-		self.qat = self.config.get('qat', False)
-		self.preparam_precision = torch.float32 if self.qat else P.DTYPE
+		# Prepare quantizer
+		self.quantizer = Quantizer(self.config)
 
 		print("Loading dataset...")
 		self.data_manager = utils.retrieve(self.config.get('data_manager', 'dataloaders.videodataset.UCF101DataManager'))(self.config, self.dataseed)
@@ -122,20 +230,20 @@ class Experiment:
 		utils.set_rng_seed(self.seed)
 		self.model = utils.retrieve(self.config.get('model', 'models.R3D.R3D'))(self.config, num_classes=self.data_manager.num_classes)
 		self.model.to(dtype=P.DTYPE)
-		with torch.no_grad(): self.model.pre_params = nn.ParameterDict({n.replace('.', '/'): self.stretch_h * p for n, p in self.model.named_parameters()}) if self.stretch_h != 1 or self.qat else None
+		self.model.pre_params = nn.ParameterDict({n.replace('.', '/'): self.quantizer.param_to_pre_param(p) for n, p in self.model.named_parameters()}) if self.quantizer.pre_params_enabled() else None
 		if self.pretrain_path is not None: # Initialize model from pre-trained dictionary if necessary
 			model_path = self.pretrain_path.replace('<token>', self.token if self.token is not None else '')
 			print("Initializing model from pre-trained dictionary at {}...".format(model_path))
 			try: print(self.model.load_state_dict(utils.map_dtype(utils.load_dict(model_path), dtype=P.DTYPE), strict=False))
 			except: print("WARNING: no model found in {}. Using model initialized from scratch.".format(model_path))
 			if self.model.pre_params is not None:
-				with torch.no_grad(): self.model.pre_params = nn.ParameterDict({n.replace('.', '/'): self.stretch_h * p for n, p in self.model.named_parameters() if not n.startswith('pre_params')})
+				self.model.pre_params = nn.ParameterDict({n.replace('.', '/'): self.quantizer.param_to_pre_param(p) for n, p in self.model.named_parameters() if not n.startswith('pre_params')})
 		if self.mode == 'test': # Load pretrained models for testing if necessary
 			model_path = self.best_model_path
 			print("Loading pre-trained model from {}...".format(model_path))
 			try: self.model.load_state_dict(utils.map_dtype(utils.load_dict(model_path), dtype=P.DTYPE))
 			except: print("WARNING: no model found in {}. Using untrained model for testing.".format(model_path))
-		if self.model.pre_params is not None: self.model.pre_params.to(dtype=self.preparam_precision)
+		if self.model.pre_params is not None: self.model.pre_params.to(dtype=self.quantizer.preparam_precision)
 		print("Model loaded!")
 
 		# Resume training from previous checkpoint, or restart from scratch
@@ -274,22 +382,22 @@ class Experiment:
 
 			total_loss = batch_loss
 			if hasattr(self.model, 'internal_loss'): total_loss = total_loss + self.model.internal_loss()
-			total_loss = self.stretch_v * total_loss
+			total_loss = self.quantizer.rescale_loss(total_loss)
 
 			self.model.zero_grad()
 			self.optimizer.zero_grad()
 			total_loss.backward()
 			if self.model.pre_params is not None:
 				for n, p in self.model.named_parameters():
-					if not n.startswith('pre_params'): self.model.pre_params[n.replace('.', '/')].grad = ((self.stretch_g / self.stretch_v) * p.grad.to(dtype=self.preparam_precision) if p.grad is not None else None)
+					if not n.startswith('pre_params'): self.model.pre_params[n.replace('.', '/')].grad = self.quantizer.param_to_pre_param_grad(p)
 			else:
 				for p in self.model.parameters():
-					p.grad = ((self.stretch_g / self.stretch_v) * p.grad if p.grad is not None else None)
+					p.grad = self.quantizer.param_to_pre_param_grad(p)
 			self.optimizer.step()
 			if self.model.pre_params is not None:
 				with torch.no_grad():
 					for n, p in self.model.named_parameters():
-						if not n.startswith('pre_params'): p[:] = self.model.pre_params[n.replace('.', '/')] / self.stretch_h
+						if not n.startswith('pre_params'): p.data = self.quantizer.pre_param_to_param(self.model.pre_params[n.replace('.', '/')])
 
 			running_loss += batch_loss.item() * batch_count
 			running_hits += batch_hits
@@ -335,7 +443,7 @@ class Experiment:
 			print("\nEVAL | Config {} | Iter {}".format(self.config_name, self.seed))
 			print("Evaluating model on {} set...".format(dataset))
 			self.test_evaluator = AggregateEvaluator(self.data_manager.tst_size, self.data_manager.num_classes, self.data_manager.clips_per_video*self.data_manager.crops_per_video,
-			                                         self.criterion) if dataset == 'test' and self.data_manager.clips_per_video*self.data_manager.crops_per_video > 1 else None
+													 self.criterion) if dataset == 'test' and self.data_manager.clips_per_video*self.data_manager.crops_per_video > 1 else None
 			result_loss, result_acc, result_acc_t5 = self.eval_pass(dataloader)
 			print("Results on {} set: loss {}, acc. {}, top-5 acc. {}".format(dataset, result_loss, result_acc, result_acc_t5))
 			print("Saving results...")
@@ -401,6 +509,7 @@ def run_experiment(config, mode, device, restart, seeds, dataseeds, tokens, data
 	P.DATASET_FOLDER = datafolder
 	if fragsize is not None: os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:{}'.format(fragsize)
 	os.environ['HUGGINGFACE_HUB_CACHE'] = os.path.join(P.ASSETS_FOLDER, 'hub')
+	torch.hub.set_dir(os.path.join(P.ASSETS_FOLDER, 'hub'))
 
 	for iter, seed in enumerate(seeds):
 		dataseed = dataseeds[iter % len(dataseeds)]

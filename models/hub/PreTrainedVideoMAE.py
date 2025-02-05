@@ -11,7 +11,6 @@ import params as P
 class PreTrainedVideoMAE(nn.Module):
 	def __init__(self, config, num_classes):
 		super().__init__()
-
 		self.net = transformers.VideoMAEForVideoClassification.from_pretrained('MCG-NJU/videomae-base-finetuned-kinetics')
 
 	def forward(self, x):

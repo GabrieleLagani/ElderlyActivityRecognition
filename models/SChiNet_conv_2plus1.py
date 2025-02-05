@@ -310,9 +310,13 @@ class SChiStage(nn.Module):
 		self.out_channels1 = out_channels1
 		self.out_channels2 = out_channels2
 		self.heads = heads
+		kernel_size = _triple(kernel_size)
 		self.kernel_size = kernel_size
+		stride1 = _triple(stride1)
 		self.stride1 = stride1
-		self.stride2 = stride2
+		stride2 = _triple(stride2)
+		self.stride2 =stride2
+		res_kernel_size = _triple(res_kernel_size)
 		self.res_kernel_size = res_kernel_size
 		self.depth = depth
 		self.fullconv = fullconv
@@ -335,37 +339,37 @@ class SChiStage(nn.Module):
 		res_kernel_size_b = tuple(1 if dim2xdim[i+2] not in self.x_dim else k for i, k in enumerate(_triple(res_kernel_size)))
 
 		self.pw1_a = CBlock(in_channels1, out_channels1, heads,
-					conv=MultiHeadConv3d(*((in_channels1*heads, out_channels1*heads, 1, in_channels1*heads) if fullconv else (in_channels1, out_channels1, heads, in_channels1)),
+					conv=MultiHeadConv2Plus1d(*((in_channels1*heads, out_channels1*heads, 1, in_channels1*heads) if fullconv else (in_channels1, out_channels1, heads, in_channels1)),
 					       shared_map=shared_map, kernel_size=kernel_size, stride=stride1, padding='same'),
 					proj=Column(MultiHeadResBlock(out_channels1, heads,
-						conv=MultiHeadConv3d(out_channels1, out_channels1, heads, out_channels1, shared_map=shared_map,
+						conv=MultiHeadConv2Plus1d(out_channels1, out_channels1, heads, out_channels1, shared_map=shared_map,
 							   kernel_size=res_kernel_size, stride=1, padding='same'),
 						act=act, norm=norm, order='CANCANS'), depth=depth, recurrent=False),
 		            act=act, norm=norm, order='CANPN')
 
 		self.pw1_b = CBlock(in_channels_b, out_channels_b, heads,
-					conv=MultiHeadConv3d(*((in_channels_b*heads, out_channels_b*heads, 1, in_channels_b*heads) if fullconv else (in_channels_b, out_channels_b, heads, in_channels_b)),
+					conv=MultiHeadConv2Plus1d(*((in_channels_b*heads, out_channels_b*heads, 1, in_channels_b*heads) if fullconv else (in_channels_b, out_channels_b, heads, in_channels_b)),
 					       shared_map=shared_map, kernel_size=kernel_size_b, stride=sp, padding='same'),
 					proj=Column(MultiHeadResBlock(out_channels_b, heads,
-						conv=MultiHeadConv3d(out_channels_b, out_channels_b, heads, out_channels_b, shared_map=shared_map,
+						conv=MultiHeadConv2Plus1d(out_channels_b, out_channels_b, heads, out_channels_b, shared_map=shared_map,
 							   kernel_size=res_kernel_size_b, stride=1, padding='same'),
 						act=act, norm=norm, order='CANCANS'), depth=depth, recurrent=False),
 		            act=act, norm=norm, order='CANPN')
 
 		self.pw2_a = CBlock(in_channels2, out_channels2, heads,
-					conv=MultiHeadConv3d(*((in_channels2*heads, out_channels2*heads, 1, in_channels2*heads) if fullconv else (in_channels2, out_channels2, heads, in_channels2)),
+					conv=MultiHeadConv2Plus1d(*((in_channels2*heads, out_channels2*heads, 1, in_channels2*heads) if fullconv else (in_channels2, out_channels2, heads, in_channels2)),
 					       shared_map=shared_map, kernel_size=kernel_size, stride=stride2, padding='same'),
 					proj=Column(MultiHeadResBlock(out_channels2, heads,
-						conv=MultiHeadConv3d(out_channels2, out_channels2, heads, out_channels2, shared_map=shared_map,
+						conv=MultiHeadConv2Plus1d(out_channels2, out_channels2, heads, out_channels2, shared_map=shared_map,
 							   kernel_size=res_kernel_size, stride=1, padding='same'),
 						act=act, norm=norm, order='CANCANS'), depth=depth, recurrent=False),
 		            act=act, norm=norm, order='CANPN')
 
 		self.pw2_b = CBlock(in_channels_b, out_channels_b, heads,
-					conv=MultiHeadConv3d(*((in_channels_b*heads, out_channels_b*heads, 1, in_channels_b*heads) if fullconv else (in_channels_b, out_channels_b, heads, in_channels_b)),
+					conv=MultiHeadConv2Plus1d(*((in_channels_b*heads, out_channels_b*heads, 1, in_channels_b*heads) if fullconv else (in_channels_b, out_channels_b, heads, in_channels_b)),
 					       shared_map=shared_map, kernel_size=kernel_size_b, stride=sp, padding='same'),
 					proj=Column(MultiHeadResBlock(out_channels_b, heads,
-						conv=MultiHeadConv3d(out_channels_b, out_channels_b, heads, out_channels_b, shared_map=shared_map,
+						conv=MultiHeadConv2Plus1d(out_channels_b, out_channels_b, heads, out_channels_b, shared_map=shared_map,
 							   kernel_size=res_kernel_size_b, stride=1, padding='same'),
 						act=act, norm=norm, order='CANCANS'), depth=depth, recurrent=False),
 		            act=act, norm=norm, order='CANPN')
@@ -530,7 +534,7 @@ def test_schinet():
 	config4 = {**defaults, 'enc_kernel_sizes': ((8, 7, 7), (3, 7, 7)), 'enc_strides': ((8, 2, 2), (2, 4, 4)), 'enc_channels': (channels1, channels2), 'token_dim': (2, 3, 4), 'x_dim': None}
 
 
-	config = config3
+	config = config1
 	model = SChiNet(config, 101)
 	model.set_debug_mode(True)
 

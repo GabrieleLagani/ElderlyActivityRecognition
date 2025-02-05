@@ -11,7 +11,6 @@ import params as P
 class PreTrainedS3D(nn.Module):
     def __init__(self, config, num_classes):
         super().__init__()
-        torch.hub.set_dir(os.path.join(P.ASSETS_FOLDER, 'hub'))
         self.net = s3d(weights='KINETICS400_V1')
 
     def forward(self, x):

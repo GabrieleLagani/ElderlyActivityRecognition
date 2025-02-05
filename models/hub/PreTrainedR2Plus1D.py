@@ -11,7 +11,6 @@ import params as P
 class PreTrainedR2Plus1D(nn.Module):
     def __init__(self, config, num_classes):
         super().__init__()
-        torch.hub.set_dir(os.path.join(P.ASSETS_FOLDER, 'hub'))
         self.net = r2plus1d_18(pretrained='KINETICS400_V1')
 
     def forward(self, x):

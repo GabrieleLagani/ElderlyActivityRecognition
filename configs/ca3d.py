@@ -15,11 +15,9 @@ for d, p, lr in [(d, p, lr) for d in datasets for p in precisions for lr in lrs]
 		'proj_map_type': 'MultiHeadLinear', 'proj_kernel_size': 1, 'headwise_map': True, 'shared_map': False, 'shared_qkv': 'FFF',
 		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'attn_norm': 'models.modutils.BatchNorm', 'init_mode': 'kaiming_normal',
 		'pos_emb_mode': 'once', 'disable_wd_for_pos_emb': False, 'drop': 0., 'pos_drop': 0., 'final_drop': 0.5,
-	    'precision': precisions[p], 'qat': p == 'f16-qat', 'stretch': (.1, .1, .1) if p == 'f16' else (1, 1, 1),
+	    **precisions[p],
 		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
-		'epochs': 150 if d.startswith('kinetics') else 50, 'sched_milestones': range(50, 150, 10) if d.startswith('kinetics') else range(25, 50, 5), 'sched_decay': 0.5,
-		#'epochs': 100, 'sched_milestones': [40, 70, 90], 'sched_decay': 0.1,
-		'warmup_epochs': 25, 'warmup_gamma': 10,
+		**sched_params[d],
 	}
 
 	ca3d['l_' + p + '_' + lr + '_' + d] = {
@@ -32,11 +30,9 @@ for d, p, lr in [(d, p, lr) for d in datasets for p in precisions for lr in lrs]
 		'proj_map_type': 'MultiHeadLinear', 'proj_kernel_size': 1, 'headwise_map': True, 'shared_map': False, 'shared_qkv': 'FFF',
 		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'init_mode': 'kaiming_normal',
 		'pos_emb_mode': 'once', 'disable_wd_for_pos_emb': False, 'drop': 0., 'pos_drop': 0., 'final_drop': 0.5,
-	    'precision': precisions[p], 'qat': p == 'f16-qat', 'stretch': (.1, .1, .1) if p == 'f16' else (1, 1, 1),
+	    **precisions[p],
 		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
-		'epochs': 150 if d.startswith('kinetics') else 50, 'sched_milestones': range(50, 150, 10) if d.startswith('kinetics') else range(25, 50, 5), 'sched_decay': 0.5,
-		#'epochs': 100, 'sched_milestones': [40, 70, 90], 'sched_decay': 0.1,
-		'warmup_epochs': 25, 'warmup_gamma': 10,
+		**sched_params[d],
 	}
 
 	ca3d['lr_' + p + '_' + lr + '_' + d] = {
@@ -49,11 +45,9 @@ for d, p, lr in [(d, p, lr) for d in datasets for p in precisions for lr in lrs]
 		'proj_map_type': 'MultiHeadLinear', 'proj_kernel_size': 1, 'headwise_map': True, 'shared_map': False, 'shared_qkv': 'FFF',
 		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'attn_norm': 'models.modutils.BatchNorm', 'init_mode': 'kaiming_normal',
 		'pos_emb_mode': 'once', 'disable_wd_for_pos_emb': False, 'drop': 0., 'pos_drop': 0., 'final_drop': 0.5,
-		'precision': precisions[p], 'qat': p == 'f16-qat', 'stretch': (.1, .1, .1) if p == 'f16' else (1, 1, 1),
+		**precisions[p],
 		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5,
-		'epochs': 150, 'sched_milestones': range(50, 150, 10), 'sched_decay': 0.5,
-		#'epochs': 100, 'sched_milestones': [40, 70, 90], 'sched_decay': 0.1,
-		'warmup_epochs': 25, 'warmup_gamma': 10,
+		**sched_params[d],
 	}
 
 	ca3d['lrc_' + p + '_' + lr + '_' + d] = {
@@ -66,11 +60,9 @@ for d, p, lr in [(d, p, lr) for d in datasets for p in precisions for lr in lrs]
 		'proj_map_type': 'MultiHeadLinear', 'proj_kernel_size': 1, 'headwise_map': True, 'shared_map': False, 'shared_qkv': 'FFF',
 		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'attn_norm': 'models.modutils.BatchNorm', 'init_mode': 'kaiming_normal',
 		'pos_emb_mode': 'once', 'disable_wd_for_pos_emb': False, 'drop': 0., 'pos_drop': 0., 'final_drop': 0.5,
-		'precision': precisions[p], 'qat': p == 'f16-qat', 'stretch': (.1, .1, .1) if p == 'f16' else (1, 1, 1),
+		**precisions[p],
 		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5,
-		'epochs': 150, 'sched_milestones': range(50, 150, 10), 'sched_decay': 0.5,
-		#'epochs': 100, 'sched_milestones': [40, 70, 90], 'sched_decay': 0.1,
-		'warmup_epochs': 25, 'warmup_gamma': 10,
+		**sched_params[d],
 	}
 
 	ca3d['lf_' + p + '_' + lr + '_' + d] = {
@@ -83,11 +75,9 @@ for d, p, lr in [(d, p, lr) for d in datasets for p in precisions for lr in lrs]
 		'proj_map_type': 'MultiHeadLinear', 'proj_kernel_size': 1, 'headwise_map': True, 'shared_map': False, 'shared_qkv': 'FFF',
 		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'init_mode': 'kaiming_normal',
 		'pos_emb_mode': 'once', 'disable_wd_for_pos_emb': False, 'drop': 0., 'pos_drop': 0., 'final_drop': 0.5,
-	    'precision': precisions[p], 'qat': p == 'f16-qat', 'stretch': (.1, .1, .1) if p == 'f16' else (1, 1, 1),
+	    **precisions[p],
 		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
-		'epochs': 150 if d.startswith('kinetics') else 50, 'sched_milestones': range(50, 150, 10) if d.startswith('kinetics') else range(25, 50, 5), 'sched_decay': 0.5,
-		#'epochs': 100, 'sched_milestones': [40, 70, 90], 'sched_decay': 0.1,
-		'warmup_epochs': 25, 'warmup_gamma': 10,
+		**sched_params[d],
 	}
 
 	ca3d_1[p + '_' + lr + '_' + d] = {
@@ -100,11 +90,9 @@ for d, p, lr in [(d, p, lr) for d in datasets for p in precisions for lr in lrs]
 		'proj_map_type': 'MultiHeadLinear', 'proj_kernel_size': 1, 'headwise_map': True, 'shared_map': False, 'shared_qkv': 'FFF',
 		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'init_mode': 'kaiming_normal',
 		'pos_emb_mode': 'once', 'disable_wd_for_pos_emb': False, 'drop': 0., 'pos_drop': 0., 'final_drop': 0.5,
-	    'precision': precisions[p], 'qat': p == 'f16-qat', 'stretch': (.1, .1, .1) if p == 'f16' else (1, 1, 1),
+	    **precisions[p],
 	    'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
-		'epochs': 150 if d.startswith('kinetics') else 50, 'sched_milestones': range(50, 150, 10) if d.startswith('kinetics') else range(25, 50, 5), 'sched_decay': 0.5,
-		#'epochs': 100, 'sched_milestones': [40, 70, 90], 'sched_decay': 0.1,
-		'warmup_epochs': 25, 'warmup_gamma': 10,
+		**sched_params[d],
 	}
 
 

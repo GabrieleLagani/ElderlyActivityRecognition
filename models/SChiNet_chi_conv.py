@@ -15,7 +15,7 @@ dim2xdim = {1: 4, 2: 2, 3: 3, 4: 3}
 strxdim2xdim = {'t': 2, 's': 3, 'c': 4}
 
 class ChiStream(nn.Module):
-	def __init__(self, pw1_shape=(8, 14*14, 64), pw2_shape=(32, 7*7, 64), heads=8, token_dim=None, x_dim=('s', 't'),
+	def __init__(self, pw1_shape=(64, 8, 14, 14), pw2_shape=(64, 32, 7, 7), heads=8, token_dim=None, x_dim=('s', 't'),
 	             norm=nn.LayerNorm, headwise_map=False, alternate_attn=False):
 		super().__init__()
 
@@ -23,148 +23,105 @@ class ChiStream(nn.Module):
 
 		x_dim = [strxdim2xdim[d] for d in x_dim]
 		self.pw1_shape = pw1_shape
-		self.pw1_compr_shape = tuple(pw2_shape[i] if i+2 == x_dim[0] else s if i+2 in x_dim or i+2==4 else 1 for i, s in enumerate(pw1_shape))
+		self.pw1_tokenized_shape = [pw1_shape[1], pw1_shape[2]*pw1_shape[3], pw1_shape[0]]
+		self.pw1_compr_shape = [pw2_shape[i] if dim2xdim[i+1] == x_dim[0] else s if dim2xdim[i+1] in x_dim or dim2xdim[i+1]==4 else 1 for i, s in enumerate(pw1_shape)]
+		self.pw1_tokenized_compr_shape = [self.pw1_compr_shape[1], self.pw1_compr_shape[2]*self.pw1_compr_shape[3], self.pw1_compr_shape[0]]
 		self.pw2_shape = pw2_shape
-		self.pw2_compr_shape = tuple(pw1_shape[i] if i+2 == x_dim[1] else s if i+2 in x_dim or i+2==4 else 1 for i, s in enumerate(pw2_shape))
+		self.pw2_tokenized_shape = [pw2_shape[1], pw2_shape[2] * pw2_shape[3], pw2_shape[0]]
+		self.pw2_compr_shape = [pw1_shape[i] if dim2xdim[i+1] == x_dim[1] else s if dim2xdim[i+1] in x_dim or dim2xdim[i+1]==4 else 1 for i, s in enumerate(pw2_shape)]
+		self.pw2_tokenized_compr_shape = [self.pw2_compr_shape[1], self.pw2_compr_shape[2]*self.pw2_compr_shape[3], self.pw2_compr_shape[0]]
 		self.heads = heads
 		self.norm = norm
 		self.headwise_map = headwise_map
 		self.alternate_attn = alternate_attn
 
-		self.headsize1 = self.pw1_shape[-1]
-		self.headsize2 = self.pw2_shape[-1]
-		self.pw1_mixes_channels = (x_dim[0] == (2 + len(self.pw1_shape) - 1))
-		self.pw2_mixes_channels = (x_dim[1] == (2 + len(self.pw2_shape) - 1))
-		self.channels1 = pw1_shape[-1] #self.pw1_shape[x_dim[1] - 2] if self.pw1_mixes_channels else self.pw1_shape[-1]
-		self.channels2 = pw2_shape[-1] #self.pw2_shape[x_dim[0] - 2] if self.pw2_mixes_channels else self.pw2_shape[-1]
-		self.tokens1 = (self.pw1_shape[x_dim[0] - 2] + self.pw1_compr_shape[x_dim[0] - 2]) if self.pw2_mixes_channels else ((self.pw1_shape[-1] + self.pw1_compr_shape[-1]) if self.pw1_mixes_channels else self.pw1_shape[-1])
-		self.tokens2 = (self.pw2_shape[x_dim[1] - 2] + self.pw2_compr_shape[x_dim[1] - 2]) if self.pw1_mixes_channels else ((self.pw2_shape[-1] + self.pw2_compr_shape[-1]) if self.pw2_mixes_channels else self.pw2_shape[-1])
+		self.headsize1 = pw1_shape[0]
+		self.headsize2 = pw2_shape[0]
+		self.pw1_mixes_channels = (x_dim[0] == 4)
+		self.pw2_mixes_channels = (x_dim[1] == 4)
+		self.channels1 = pw1_shape[0]
+		self.channels2 = pw2_shape[0]
+		self.tokens1 = (self.pw1_tokenized_shape[x_dim[0] - 2] + self.pw1_tokenized_compr_shape[x_dim[0] - 2]) if self.pw2_mixes_channels else ((self.pw1_tokenized_shape[-1] + self.pw1_tokenized_compr_shape[-1]) if self.pw1_mixes_channels else self.headsize1)
+		self.tokens2 = (self.pw2_tokenized_shape[x_dim[1] - 2] + self.pw2_tokenized_compr_shape[x_dim[1] - 2]) if self.pw1_mixes_channels else ((self.pw2_tokenized_shape[-1] + self.pw2_tokenized_compr_shape[-1]) if self.pw2_mixes_channels else self.headsize2)
 		self.token_dim = token_dim
 		self.x_dim = x_dim
 
-		c1 = self.channels1 * self.heads
-		c2 = self.channels2 * self.heads
+		c1 = self.headsize1 * self.heads
+		c2 = self.headsize2 * self.heads
 		t1 = self.tokens1 * self.heads
 		t2 = self.tokens2 * self.heads
 
-		# Attention stage 1 QKV mappings
-		self.Q1_1 = nn.Conv1d(c2 if self.pw1_mixes_channels else c1, c2 if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear(c2 if self.pw1_mixes_channels else c1, c2 if self.pw1_mixes_channels else c1)
-		self.K1_1 = nn.Conv1d((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1)
-		self.V1_1 = nn.Conv1d((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1)
-		self.Q2_1 = nn.Conv1d(c1 if self.pw2_mixes_channels else c2, c1 if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear(c1 if self.pw2_mixes_channels else c2, c1 if self.pw2_mixes_channels else c2)
-		self.K2_1 = nn.Conv1d((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2)
-		self.V2_1 = nn.Conv1d((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2)
-		self.norm1_1 = norm(c2 if self.pw1_mixes_channels else c1)
-		self.norm2_1 = norm(c1 if self.pw2_mixes_channels else c2)
+		# Convolutional mappings
+		d1, h1, w1 = pw1_shape[1], pw1_shape[2], pw1_shape[3]
+		d2, h2, w2 = pw2_shape[1], pw2_shape[2], pw2_shape[3]
+		c_inner = 2 * min(c1, c2)
 
-		# Attention stage 2 QKV mappings
-		self.Q1_2 = nn.Conv1d((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1)
-		self.K1_2 = nn.Conv1d((2 * c2) if self.pw1_mixes_channels else c1, (2 * c2) if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear((2 * c2) if self.pw1_mixes_channels else c1, (2 * c2) if self.pw1_mixes_channels else c1)
-		self.V1_2 = nn.Conv1d((2 * c2) if self.pw1_mixes_channels else c1, (2 * c2) if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear((2 * c2) if self.pw1_mixes_channels else c1, (2 * c2) if self.pw1_mixes_channels else c1)
-		self.Q2_2 = nn.Conv1d((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2)
-		self.K2_2 = nn.Conv1d((2 * c1) if self.pw2_mixes_channels else c2, (2 * c1) if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear((2 * c1) if self.pw2_mixes_channels else c2, (2 * c1) if self.pw2_mixes_channels else c2)
-		self.V2_2 = nn.Conv1d((2 * c1) if self.pw2_mixes_channels else c2, (2 * c1) if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear((2 * c1) if self.pw2_mixes_channels else c2, (2 * c1) if self.pw2_mixes_channels else c2)
-		self.norm1_2 = norm((c1 + c2) if self.pw1_mixes_channels else c1)
-		self.norm2_2 = norm((c1 + c2) if self.pw2_mixes_channels else c2)
+		self.compress1 = nn.Sequential(
+				nn.Conv3d(c1, c_inner, 3, padding=1),
+				nn.Upsample((d2, h2, w2)),
+				nn.ReLU(inplace=True),
+				nn.BatchNorm3d(c_inner),
+			)
 
-		# Attention stage 3 QKV mappings
-		self.Q1_3 = nn.Conv1d((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1)
-		self.K1_3 = nn.Conv1d((c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), (c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), (c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1))
-		self.V1_3 = nn.Conv1d((c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), (c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), (c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1))
-		self.Q2_3 = nn.Conv1d((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2)
-		self.K2_3 = nn.Conv1d((c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), (c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), (c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2))
-		self.V2_3 = nn.Conv1d((c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), (c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), (c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2))
-		self.norm1_3 = norm((c1 + c2) if self.pw1_mixes_channels else c1)
-		self.norm2_3 = norm((c1 + c2) if self.pw2_mixes_channels else c2)
+		self.compress2 = nn.Sequential(
+				nn.Conv3d(c2, c_inner, 3, padding=1),
+				nn.Upsample((d1, h1, w1)),
+				nn.ReLU(inplace=True),
+				nn.BatchNorm3d(c_inner),
+			)
+
+		self.compress_b1 = nn.Sequential(
+				nn.Conv3d(c1, c_inner, 3, padding=1),
+				nn.Upsample((min(d1, d2) if 2 in self.x_dim else 1, min(h1, h2) if 3 in self.x_dim else 1, min(w1, w2) if 3 in self.x_dim else 1)),
+				nn.ReLU(inplace=True),
+				nn.BatchNorm3d(c_inner),
+			)
+
+		self.compress_b2 = nn.Sequential(
+				nn.Conv3d(c2, c_inner, 3, padding=1),
+				nn.Upsample((min(d1, d2) if 2 in self.x_dim else 1, min(h1, h2) if 3 in self.x_dim else 1, min(w1, w2) if 3 in self.x_dim else 1)),
+				nn.ReLU(inplace=True),
+				nn.BatchNorm3d(c_inner),
+			)
+
+		#self.out1 = nn.Sequential(
+		#		nn.Conv3d(c1 + c_inner, c1, 1),
+		#		nn.ReLU(inplace=True),
+		#		nn.BatchNorm3d(c1),
+		#	)
+
+		#self.out2 = nn.Sequential(
+		#		nn.Conv3d(c2 + c_inner, c2, 1),
+		#		nn.ReLU(inplace=True),
+		#		nn.BatchNorm3d(c2),
+		#	)
+
+		# self.out_b1 = nn.Sequential(
+		#		nn.Conv3d(c1 + c_inner, c1, 1),
+		#		nn.ReLU(inplace=True),
+		#		nn.BatchNorm3d(c1),
+		#	)
+
+		# self.out_b2 = nn.Sequential(
+		#		nn.Conv3d(c2 + c_inner, c2, 1),
+		#		nn.ReLU(inplace=True),
+		#		nn.BatchNorm3d(c2),
+		#	)
 
 	def new(self):
 		return ChiStream(pw1_shape=self.pw1_shape, pw2_shape=self.pw2_shape, heads=self.heads, token_dim=self.token_dim, x_dim=self.x_dim,
 		                 norm=self.norm, headwise_map=self.headwise_map, alternate_attn=self.alternate_attn)
 
-	def map(self, M, x):
-		C = x.shape[-1]
-		x = merge_heads_and_channels(x)
-		if isinstance(M, nn.Conv1d):
-			x_shape = x.shape
-			x = x.reshape(-1, x_shape[-2], x_shape[-1]).transpose(-2, -1)
-			y = M(x).transpose(-2, -1).reshape(*x_shape[:-1], -1)
-		else:
-			y = M(x)
-		return restore_heads_and_channels(y, C)
-
-	def qkv_aggregate(self, q, k, v, dim=-2, last=False):
-		q, k, v = q.transpose(dim, -2), k.transpose(dim, -2), v.transpose(dim, -2)
-		q, k, v = q.mean(dim=-3, keepdim=True), k.mean(dim=-3, keepdim=True), (v if last or 4 not in self.x_dim else v.mean(dim=-3, keepdim=True))
-		n = v.shape[-3]
-		v = v.transpose(-3, -2).reshape(v.shape[0], v.shape[1], 1, v.shape[-2], -1)
-		agg = qkv_aggregate(q, k, v)
-		agg = agg.reshape(agg.shape[0], agg.shape[1], agg.shape[-2], n, -1).transpose(-3, -2)
-
-		#agg = qkv_aggregate(q, k, v)
-
-		return agg.transpose(dim, -2)
-
 	def chi(self, x1, p1, x2, p2):
-		# x1 --> Nc
-		# p1 --> nc
-		# x2 --> nC
-		# p2 --> nc
-
-		# Prepare inputs
-		x1 = torch.cat([ x1, p1.expand([s if i not in [2, 3]  or i in self.x_dim else x1.shape[i] for i, s in enumerate(p1.shape)]) ], dim=self.x_dim[0])
-		x2 = torch.cat([ x2, p2.expand([s if i not in [2, 3]  or i in self.x_dim else x2.shape[i] for i, s in enumerate(p2.shape)]) ], dim=self.x_dim[1])
-
-		# Attention stage 1: Compress along high-res pathway
-		x1_hat = self.map(self.norm1_1, self.qkv_aggregate(self.map(self.Q1_1, p1), self.map(self.K1_1, x1), self.map(self.V1_1, x1), dim=self.x_dim[0]))
-		x2_hat = self.map(self.norm2_1, self.qkv_aggregate(self.map(self.Q2_1, p2).transpose(self.x_dim[0], self.x_dim[1]), self.map(self.K2_1, x2).transpose(self.x_dim[0], self.x_dim[1]), self.map(self.V2_1, x2).transpose(self.x_dim[0], self.x_dim[1]), dim=self.x_dim[0]).transpose(self.x_dim[0], self.x_dim[1]))
-
-		# Chiasm
-		x12_hat, x21_hat = torch.cat([x1_hat, x2_hat], dim=self.x_dim[0]), torch.cat([x2_hat, x1_hat], dim=self.x_dim[1])
-
-		# Optional: Cat with uncompressed tensors and compress along alternate high-res pathway
-		#x12 = torch.cat([x1, x12_hat], dim=-2)
-		#x21 = torch.cat([x2, x21_hat], dim=-1)
-		#x12_hat = self.qkv_aggregate(p1, x12, x12)
-		#x21_hat = self.qkv_aggregate(p2.transpose(-2, -1), x21.transpose(-2, -1), x21.transpose(-2, -1)).transpose(-2, -1)
-		#x12_hat, x21_hat = torch.cat([x12_hat, x21_hat], dim=self.x_dim[0]), torch.cat([x21_hat, x12_hat], dim=self.x_dim[1])
-
-		# Attention stage 2: Extend along alternate high-res pathway
-		x12 = self.map(self.norm1_2, self.qkv_aggregate(self.map(self.Q1_2, x1), self.map(self.K1_2, x12_hat), self.map(self.V1_2, x12_hat), dim=self.x_dim[0]))
-		x21 = self.map(self.norm2_2, self.qkv_aggregate(self.map(self.Q2_2, x2).transpose(self.x_dim[0], self.x_dim[1]), self.map(self.K2_2, x21_hat).transpose(self.x_dim[0], self.x_dim[1]), self.map(self.V2_2, x21_hat).transpose(self.x_dim[0], self.x_dim[1]), dim=self.x_dim[0]).transpose(self.x_dim[0], self.x_dim[1]))
-		x12 = x12.expand([s if i not in [2, 3] or i in self.x_dim else x1.shape[i] for i, s in enumerate(x12.shape)])
-		x21 = x21.expand([s if i not in [2, 3] or i in self.x_dim else x2.shape[i] for i, s in enumerate(x21.shape)])
-
-		y1, y2 = x12, x21
-		if self.alternate_attn:
-			# Cat along alternate low-res pathway
-			x12 = torch.cat([x1, x12], dim=self.x_dim[1])
-			x21 = torch.cat([x2, x21], dim=self.x_dim[0])
-
-			# Attention stage 3: Aggregate along alternate low-res pathway
-			y1 = self.map(self.norm1_3, self.qkv_aggregate(self.map(self.Q1_3, x1).transpose(self.x_dim[0], self.x_dim[1]), self.map(self.K1_3, x12).transpose(self.x_dim[0], self.x_dim[1]), self.map(self.V1_3, x12).transpose(self.x_dim[0], self.x_dim[1]), dim=self.x_dim[0], last=True).transpose(self.x_dim[0], self.x_dim[1]))
-			y2 = self.map(self.norm2_3, self.qkv_aggregate(self.map(self.Q2_3, x2), self.map(self.K2_3, x21), self.map(self.V2_3, x21), dim=self.x_dim[0], last=True))
-
-		# Final outputs
-		y1 = x1 + y1
-		y2 = x2 + y2
-		y1, q1 = torch.split(y1, (y1.shape[self.x_dim[0]] - p1.shape[self.x_dim[0]], p1.shape[self.x_dim[0]]), dim=self.x_dim[0])
-		y2, q2 = torch.split(y2, (y2.shape[self.x_dim[1]] - p2.shape[self.x_dim[1]], p2.shape[self.x_dim[1]]), dim=self.x_dim[1])
-		q1 = q1 if 4 not in self.x_dim else q1.mean(dim=2 if 2 not in self.x_dim else 3, keepdim=True)
-		q2 = q2 if 4 not in self.x_dim else q2.mean(dim=2 if 2 not in self.x_dim else 3, keepdim=True)
-
+		x12, x21 = self.compress1(x1), self.compress2(x2)
+		p12, p21 = self.compress_b1(x1), self.compress_b2(x2)
+		y1, y2 = torch.cat([x1, x21], dim=1), torch.cat([x2, x12], dim=1)
+		q1, q2 = torch.cat([p1, p21], dim=1), torch.cat([p2, p12], dim=1)
+		#y1, y2 = self.out1(y1) + x1, self.out2(y2) + x2
 		return y1, q1, y2, q2
 
-	def _tokenize(self, x, token_dim, pw_shape):
-		tokenizer = Tokenizer(list(range(x.ndim)), token_dim)
-		x = split_heads(tokenizer.tokenize(x), pw_shape[-1])
-		return x.reshape(x.shape[0], x.shape[1], *pw_shape), tokenizer, pw_shape
-
-	def _untokenize(self, x, tokenizer, pw_shape):
-		return tokenizer.untokenize(merge_heads(x.reshape(x.shape[0], x.shape[1], -1, pw_shape[-1])))
-
 	def forward(self, x1, p1, x2, p2):
-		x1, p1, x2, p2 = (self._tokenize(x, self.token_dim, pws) for x, pws in zip((x1, p1, x2, p2), (self.pw1_shape, self.pw1_compr_shape, self.pw2_shape, self.pw2_compr_shape)))
-		return (self._untokenize(x, t, pws) for x, t, pws in zip(self.chi(x1[0], p1[0], x2[0], p2[0]), (x1[1], p1[1], x2[1], p2[1]), (x1[2], p1[2], x2[2], p2[2])))
+		return self.chi(x1, p1, x2, p2)
 
 	def set_debug_mode(self, mode=False):
 		self.debug = mode
@@ -192,7 +149,7 @@ class MixedResTubeletEnc(nn.Module):
 					proj=Column(MultiHeadResBlock(2*out_channels1, 1,
 						conv=MultiHeadConv3d(2*out_channels1, 2*out_channels1, 1, 2*out_channels1, shared_map=False,
 							   kernel_size=(1, res_kernel_size, res_kernel_size), stride=1, padding='same'),
-						act=act, norm=norm, order='CANCANS'), depth=2, recurrent=False),
+						act=act, norm=norm, order='CANCANS'), depth=0, recurrent=False),
 		        	act=act, norm=norm, order='CANPN'),
 				#nn.Conv3d(out_channels1, 2*out_channels1, 3, 2, utils.get_padding_same(3)),
 				#nn.ReLU(),
@@ -221,7 +178,7 @@ class MixedResTubeletEnc(nn.Module):
 					proj=Column(MultiHeadResBlock(2*out_channels1, 1,
 						conv=MultiHeadConv3d(2*out_channels1, 2*out_channels1, 1, 2*out_channels1, shared_map=False,
 							   kernel_size=(1, res_kernel_size, res_kernel_size), stride=1, padding='same'),
-						act=act, norm=norm, order='CANCANS'), depth=2, recurrent=False),
+						act=act, norm=norm, order='CANCANS'), depth=0, recurrent=False),
 		        	act=act, norm=norm, order='CANPN'),
 				#nn.Conv3d(out_channels1, 2*out_channels1, 3, 2, utils.get_padding_same(3)),
 				#nn.ReLU(),
@@ -246,7 +203,7 @@ class MixedResTubeletEnc(nn.Module):
 					proj=Column(MultiHeadResBlock(2*out_channels2, 1,
 						conv=MultiHeadConv3d(2*out_channels2, 2*out_channels2, 1, 2*out_channels2, shared_map=False,
 							   kernel_size=(1, res_kernel_size, res_kernel_size), stride=1, padding='same'),
-						act=act, norm=norm, order='CANCANS'), depth=2, recurrent=False),
+						act=act, norm=norm, order='CANCANS'), depth=0, recurrent=False),
 		        	act=act, norm=norm, order='CANPN'),
 				#nn.Conv3d(out_channels2, 2*out_channels2, 3, 2, utils.get_padding_same(3)),
 				#nn.ReLU(),
@@ -275,7 +232,7 @@ class MixedResTubeletEnc(nn.Module):
 					proj=Column(MultiHeadResBlock(2*out_channels1, 1,
 						conv=MultiHeadConv3d(2*out_channels1, 2*out_channels1, 1, 2*out_channels1, shared_map=False,
 							   kernel_size=(1, res_kernel_size, res_kernel_size), stride=1, padding='same'),
-						act=act, norm=norm, order='CANCANS'), depth=2, recurrent=False),
+						act=act, norm=norm, order='CANCANS'), depth=0, recurrent=False),
 		        	act=act, norm=norm, order='CANPN'),
 				#nn.Conv3d(out_channels1, 2*out_channels1, 3, 2, utils.get_padding_same(3)),
 				#nn.ReLU(),
@@ -333,9 +290,12 @@ class SChiStage(nn.Module):
 		sp = tuple((min(s1, s2) for s1, s2 in zip(_triple(stride1), _triple(stride2))))
 		kernel_size_b = tuple(1 if dim2xdim[i+2] not in self.x_dim else k for i, k in enumerate(_triple(kernel_size)))
 		res_kernel_size_b = tuple(1 if dim2xdim[i+2] not in self.x_dim else k for i, k in enumerate(_triple(res_kernel_size)))
+		inner_channels1 = in_channels1 + ((2 * in_channels_b) if self.x_dim is not None else 0)
+		inner_channels2 = in_channels2 + ((2 * in_channels_b) if self.x_dim is not None else 0)
+		inner_channels_b = in_channels_b + ((2 * in_channels_b) if self.x_dim is not None else 0)
 
-		self.pw1_a = CBlock(in_channels1, out_channels1, heads,
-					conv=MultiHeadConv3d(*((in_channels1*heads, out_channels1*heads, 1, in_channels1*heads) if fullconv else (in_channels1, out_channels1, heads, in_channels1)),
+		self.pw1_a = CBlock(inner_channels1, out_channels1, heads,
+					conv=MultiHeadConv3d(*((inner_channels1*heads, out_channels1*heads, 1, inner_channels1*heads) if fullconv else (inner_channels1, out_channels1, heads, inner_channels1)),
 					       shared_map=shared_map, kernel_size=kernel_size, stride=stride1, padding='same'),
 					proj=Column(MultiHeadResBlock(out_channels1, heads,
 						conv=MultiHeadConv3d(out_channels1, out_channels1, heads, out_channels1, shared_map=shared_map,
@@ -343,8 +303,8 @@ class SChiStage(nn.Module):
 						act=act, norm=norm, order='CANCANS'), depth=depth, recurrent=False),
 		            act=act, norm=norm, order='CANPN')
 
-		self.pw1_b = CBlock(in_channels_b, out_channels_b, heads,
-					conv=MultiHeadConv3d(*((in_channels_b*heads, out_channels_b*heads, 1, in_channels_b*heads) if fullconv else (in_channels_b, out_channels_b, heads, in_channels_b)),
+		self.pw1_b = CBlock(inner_channels_b, out_channels_b, heads,
+					conv=MultiHeadConv3d(*((inner_channels_b*heads, out_channels_b*heads, 1, inner_channels_b*heads) if fullconv else (inner_channels_b, out_channels_b, heads, inner_channels_b)),
 					       shared_map=shared_map, kernel_size=kernel_size_b, stride=sp, padding='same'),
 					proj=Column(MultiHeadResBlock(out_channels_b, heads,
 						conv=MultiHeadConv3d(out_channels_b, out_channels_b, heads, out_channels_b, shared_map=shared_map,
@@ -352,8 +312,8 @@ class SChiStage(nn.Module):
 						act=act, norm=norm, order='CANCANS'), depth=depth, recurrent=False),
 		            act=act, norm=norm, order='CANPN')
 
-		self.pw2_a = CBlock(in_channels2, out_channels2, heads,
-					conv=MultiHeadConv3d(*((in_channels2*heads, out_channels2*heads, 1, in_channels2*heads) if fullconv else (in_channels2, out_channels2, heads, in_channels2)),
+		self.pw2_a = CBlock(inner_channels2, out_channels2, heads,
+					conv=MultiHeadConv3d(*((inner_channels2*heads, out_channels2*heads, 1, inner_channels2*heads) if fullconv else (inner_channels2, out_channels2, heads, inner_channels2)),
 					       shared_map=shared_map, kernel_size=kernel_size, stride=stride2, padding='same'),
 					proj=Column(MultiHeadResBlock(out_channels2, heads,
 						conv=MultiHeadConv3d(out_channels2, out_channels2, heads, out_channels2, shared_map=shared_map,
@@ -362,7 +322,7 @@ class SChiStage(nn.Module):
 		            act=act, norm=norm, order='CANPN')
 
 		self.pw2_b = CBlock(in_channels_b, out_channels_b, heads,
-					conv=MultiHeadConv3d(*((in_channels_b*heads, out_channels_b*heads, 1, in_channels_b*heads) if fullconv else (in_channels_b, out_channels_b, heads, in_channels_b)),
+					conv=MultiHeadConv3d(*((inner_channels_b*heads, out_channels_b*heads, 1, inner_channels_b*heads) if fullconv else (inner_channels_b, out_channels_b, heads, inner_channels_b)),
 					       shared_map=shared_map, kernel_size=kernel_size_b, stride=sp, padding='same'),
 					proj=Column(MultiHeadResBlock(out_channels_b, heads,
 						conv=MultiHeadConv3d(out_channels_b, out_channels_b, heads, out_channels_b, shared_map=shared_map,
@@ -375,8 +335,8 @@ class SChiStage(nn.Module):
 
 	def forward(self, x1, p1, x2, p2):
 		if self.chi is None and self.x_dim is not None:
-			self.pw1_shape = (x1.shape[2] if 2 in self.token_dim else 1, (x1.shape[3] if 3 in self.token_dim else 1) * (x1.shape[4] if 4 in self.token_dim else 1), x1.shape[1] // self.heads)
-			self.pw2_shape = (x2.shape[2] if 2 in self.token_dim else 1, (x2.shape[3] if 3 in self.token_dim else 1) * (x2.shape[4] if 4 in self.token_dim else 1), x2.shape[1] // self.heads)
+			self.pw1_shape = (x1.shape[1] // self.heads, x1.shape[2], x1.shape[3], x1.shape[4])
+			self.pw2_shape = (x2.shape[1] // self.heads, x2.shape[2], x2.shape[3], x2.shape[4])
 			self.chi = ChiStream(self.pw1_shape, self.pw2_shape, self.heads, self.token_dim, self.x_dim, self.chi_norm, headwise_map=self.headwise_map, alternate_attn=self.alternate_attn)
 			if not self.training: self.chi.eval()
 
@@ -502,7 +462,7 @@ class SChiNet(nn.Module):
 			#heads = out_heads
 
 			#if self.head_regroup_post:
-			#	x1, p1, x2, p2 = regroup_heads(x1, out_channels1, channels1), regroup_heads(p1, min(out_channels1, out_channels2), min(channels1, channels2)), regroup_heads(x2, out_channels2, channels2), regroup_heads(p2, min(out_channels1, out_channels2), min(channels1, channels2))
+			#	x1, p1, x2, p2 = regroup_heads(x1, out_channels1, channels1),  regroup_heads(p1, min(out_channels1, out_channels2), min(channels1, channels2)), regroup_heads(x2, in_channels2, channels2), regroup_heads(p2, min(out_channels1, out_channels2), min(channels1, channels2))
 
 			if self.debug: print("Stage {}: x1 {}, p1 {}, x2 {}, p2 {}".format(i, x1.shape, p1.shape, x2.shape, p2.shape))
 

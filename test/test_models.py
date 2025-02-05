@@ -68,6 +68,15 @@ def test_slowfast():
 	outputs = net(inputs)
 	print(outputs.size())
 
+def test_movinet():
+	from models.MoViNet import MoViNet
+	config = {'movinet_model': 'A0'}
+	net = MoViNet(config, num_classes=400)
+
+	inputs = torch.rand(1, 3, 16, 112, 112)
+	outputs = net(inputs)
+	print(outputs.size())
+
 def test_stam():
 	from models.STAM import STAM
 	config = {'layer_sizes': (12, 12, 6, 8)}

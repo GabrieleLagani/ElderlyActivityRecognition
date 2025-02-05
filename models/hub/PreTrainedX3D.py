@@ -10,7 +10,6 @@ import params as P
 class PreTrainedX3D(nn.Module):
     def __init__(self, config, num_classes):
         super().__init__()
-        torch.hub.set_dir(os.path.join(P.ASSETS_FOLDER, 'hub'))
         self.net = torch.hub.load('facebookresearch/pytorchvideo', 'x3d_m', pretrained=True)
 
     def forward(self, x):

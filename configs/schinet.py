@@ -1,112 +1,144 @@
 from .defaults import *
 
+chi_params = {
+	#'st': {'enc_kernel_sizes': ((21, 7, 7), (1, 21, 21)), 'enc_strides': ((8, 2, 2), (1, 8, 8)), 'enc_channels': (64, 64), 'token_dim': (2, 3, 4), 'x_dim': ('s', 't'), 'alternate_attn': False, 'convattn': True},
+	'st': {'enc_kernel_sizes': ((21, 7, 7), (1, 35, 35)), 'enc_strides': ((8, 2, 2), (1, 16, 16)), 'enc_channels': (64, 64), 'token_dim': (2, 3, 4), 'x_dim': ('s', 't'), 'alternate_attn': False, 'convattn': True},
+	#'sc': {'enc_kernel_sizes': ((1, 7, 7), (1, 21, 21)), 'enc_strides': ((1, 2, 2), (1, 8, 8)), 'enc_channels': (8, 64), 'token_dim': (2, 3, 4), 'x_dim': ('s', 'c'), 'alternate_attn': False, 'convattn': True},
+	'sc': {'enc_kernel_sizes': ((1, 7, 7), (1, 35, 35)), 'enc_strides': ((1, 2, 2), (1, 16, 16)), 'enc_channels': (8, 64), 'token_dim': (2, 3, 4), 'x_dim': ('s', 'c'), 'alternate_attn': False, 'convattn': True},
+	'tc': {'enc_kernel_sizes': ((1, 7, 7), (21, 7, 7)), 'enc_strides': ((1, 2, 2), (8, 2, 2)), 'enc_channels': (8, 64), 'token_dim': (2, 3, 4), 'x_dim': ('t', 'c'), 'alternate_attn': False, 'convattn': True},
+}
+
 schinet = {}
 
-for d, p, lr in [(d, p, lr) for d in datasets for p in precisions for lr in lrs]:
-
-	schinet['v1_t_st_' + p + '_' + lr + '_' + d] = {
-		# kinetics400 | f32 53%, 5.9GB | f16 49%, 3.2GB
-	    **data_defaults[d],
-		'frame_resize': 112, 'frame_resample': 1, 'input_size': 112,
-		'frames_per_clip': 40, 'space_between_frames': 2,
-		'eval_frames_per_clip': 40, 'eval_space_between_frames': 2,
-		'clip_len': 32, 'clip_location': 'random', 'clip_step': 1,
-		'eval_clip_len': 32, 'eval_clip_location': 'center', 'eval_clip_step': 1,
-	    'model': 'models.SChiNet.SChiNet',
-		'enc_kernel_sizes': ((11, 7, 7), (3, 35, 35)), 'enc_strides': ((4, 2, 2), (2, 16, 16)), 'enc_channels': (64, 64),
-	    'chi_stages': ((64, 64, 4, 2), (64, 64, 8, 2)), 'fmap_size': (3, 3), 'head_regroup_post': False,
-		'token_dim': (2, 3, 4), 'x_dim': (3, 2), 'res_kernel_size': 3, 'shared_map': False, 'fullconv': False,
-		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'chi_norm': 'models.SChiNet.TokenBatchNorm', # torch.nn.LayerNorm, #
-		'init_mode': 'kaiming_normal', 'disable_wd_for_pos_emb': False, 'drop': 0., 'final_drop': 0.5,
-	    'precision': precisions[p], 'qat': p == 'f16-qat', 'stretch': (.1, .1, .1) if p == 'f16' else (1, 1, 1),
-		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
-		'epochs': 150 if d.startswith('kinetics') else 50, 'sched_milestones': range(50, 150, 10) if d.startswith('kinetics') else range(25, 50, 5), 'sched_decay': 0.5,
-		#'epochs': 100, 'sched_milestones': [40, 70, 90], 'sched_decay': 0.1,
-		'warmup_epochs': 25, 'warmup_gamma': 10,
-	}
-
-	schinet['v1_t_sc_' + p + '_' + lr + '_' + d] = {
-		# kinetics400 |  |
-	    **data_defaults[d],
-		'frame_resize': 112, 'frame_resample': 1, 'input_size': 112,
-		'frames_per_clip': 40, 'space_between_frames': 2,
-		'eval_frames_per_clip': 40, 'eval_space_between_frames': 2,
-		'clip_len': 32, 'clip_location': 'random', 'clip_step': 1,
-		'eval_clip_len': 32, 'eval_clip_location': 'center', 'eval_clip_step': 1,
-	    'model': 'models.SChiNet.SChiNet',
-		'enc_kernel_sizes': ((3, 7, 7), (3, 35, 35)), 'enc_strides': ((2, 2, 2), (2, 16, 16)), 'enc_channels': (16, 64),
-	    'chi_stages': ((16, 64, 4, 2), (16, 64, 8, 2)), 'fmap_size': (3, 3), 'head_regroup_post': False,
-		'token_dim': (2, 3, 4), 'x_dim': (3, 4), 'res_kernel_size': 3, 'shared_map': False, 'fullconv': False,
-		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'chi_norm': 'models.SChiNet.TokenBatchNorm', # torch.nn.LayerNorm, #
-		'init_mode': 'kaiming_normal', 'disable_wd_for_pos_emb': False, 'drop': 0., 'final_drop': 0.5,
-	    'precision': precisions[p], 'qat': p == 'f16-qat', 'stretch': (.1, .1, .1) if p == 'f16' else (1, 1, 1),
-		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
-		'epochs': 150 if d.startswith('kinetics') else 50, 'sched_milestones': range(50, 150, 10) if d.startswith('kinetics') else range(25, 50, 5), 'sched_decay': 0.5,
-		#'epochs': 100, 'sched_milestones': [40, 70, 90], 'sched_decay': 0.1,
-		'warmup_epochs': 25, 'warmup_gamma': 10,
-	}
-
-	schinet['v1_t_tc_' + p + '_' + lr + '_' + d] = {
-		# kinetics400 |  |
-		**data_defaults[d],
-		'frame_resize': 112, 'frame_resample': 1, 'input_size': 112,
-		'frames_per_clip': 40, 'space_between_frames': 2,
-		'eval_frames_per_clip': 40, 'eval_space_between_frames': 2,
-		'clip_len': 32, 'clip_location': 'random', 'clip_step': 1,
-		'eval_clip_len': 32, 'eval_clip_location': 'center', 'eval_clip_step': 1,
+for d, p, lr, chi_mode in [(d, p, lr, chi_mode) for d in datasets for p in precisions for lr in lrs for chi_mode in chi_params]:
+	schinet[chi_mode + '_' + p + '_' + lr + '_' + d] = {
+		**data_defaults_large_clip[d],
 		'model': 'models.SChiNet.SChiNet',
-		'enc_kernel_sizes': ((3, 7, 7), (11, 7, 7)), 'enc_strides': ((2, 2, 2), (4, 2, 2)), 'enc_channels': (16, 64),
-		'chi_stages': ((16, 64, 4, 2), (16, 64, 8, 2)), 'fmap_size': (3, 3), 'head_regroup_post': False,
-		'token_dim': (2, 3, 4), 'x_dim': (2, 4), 'res_kernel_size': 3, 'shared_map': False, 'fullconv': False,
+		**chi_params[chi_mode],
+		'chi_stages': ((*chi_params[chi_mode]['enc_channels'], 4, 2), (*chi_params[chi_mode]['enc_channels'], 8, 2)),
+		'fmap_size': (8, 7), 'head_regroup_post': False, 'res_kernel_size': 3, 'shared_map': False, 'fullconv': True,
 		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'chi_norm': 'models.SChiNet.TokenBatchNorm', # torch.nn.LayerNorm, #
 		'init_mode': 'kaiming_normal', 'disable_wd_for_pos_emb': False, 'drop': 0., 'final_drop': 0.5,
-		'precision': precisions[p], 'qat': p == 'f16-qat', 'stretch': (.1, .1, .1) if p == 'f16' else (1, 1, 1),
+		**precisions[p],
 		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
-		'epochs': 150 if d.startswith('kinetics') else 50,
-		'sched_milestones': range(50, 150, 10) if d.startswith('kinetics') else range(25, 50, 5), 'sched_decay': 0.5,
-		# 'epochs': 100, 'sched_milestones': [40, 70, 90], 'sched_decay': 0.1,
-		'warmup_epochs': 25, 'warmup_gamma': 10,
+		**sched_params[d],
 	}
 
-	schinet['v1_b_st_' + p + '_' + lr + '_' + d] = {
-		# kinetics400 |  |
-	    **data_defaults[d],
-		'frame_resize': 112, 'frame_resample': 1, 'input_size': 112,
-		'frames_per_clip': 40, 'space_between_frames': 2,
-		'eval_frames_per_clip': 40, 'eval_space_between_frames': 2,
-		'clip_len': 32, 'clip_location': 'random', 'clip_step': 1,
-		'eval_clip_len': 32, 'eval_clip_location': 'center', 'eval_clip_step': 1,
-	    'model': 'models.SChiNet.SChiNet',
-		'enc_kernel_sizes': ((11, 7, 7), (3, 35, 35)), 'enc_strides': ((4, 2, 2), (2, 16, 16)), 'enc_channels': (64, 64),
-	    'chi_stages': ((64, 64, 4, 2), (64, 64, 4, 2), (64, 64, 8, 2), (64, 64, 8, 2)), 'fmap_size': (3, 3), 'head_regroup_post': False,
-		'token_dim': (2, 3, 4), 'x_dim': (3, 2), 'res_kernel_size': 3, 'shared_map': False, 'fullconv': False,
+	schinet['chi_conv_' + chi_mode + '_' + p + '_' + lr + '_' + d] = {
+		**data_defaults_large_clip[d],
+		'model': 'models.SChiNet_chi_conv.SChiNet',
+		**chi_params[chi_mode],
+		'chi_stages': ((*chi_params[chi_mode]['enc_channels'], 4, 2), (*chi_params[chi_mode]['enc_channels'], 8, 2)),
+		'fmap_size': (8, 7), 'head_regroup_post': False, 'res_kernel_size': 3, 'shared_map': False, 'fullconv': True,
 		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'chi_norm': 'models.SChiNet.TokenBatchNorm', # torch.nn.LayerNorm, #
-		'init_mode': 'kaiming_normal', 'disable_wd_for_pos_emb': False, 'drop': 0., 'final_drop': 0.5,
-	    'precision': precisions[p], 'qat': p == 'f16-qat', 'stretch': (.1, .1, .1) if p == 'f16' else (1, 1, 1),
+		'init_mode': 'xavier_normal', 'disable_wd_for_pos_emb': False, 'drop': 0., 'final_drop': 0.5,
+		**precisions[p],
 		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
-		'epochs': 150 if d.startswith('kinetics') else 50, 'sched_milestones': range(50, 150, 10) if d.startswith('kinetics') else range(25, 50, 5), 'sched_decay': 0.5,
-		#'epochs': 100, 'sched_milestones': [40, 70, 90], 'sched_decay': 0.1,
-		'warmup_epochs': 25, 'warmup_gamma': 10,
+		**sched_params[d],
 	}
 
-	schinet['v1_l_st_' + p + '_' + lr + '_' + d] = {
-		# kinetics400 |  |
-	    **data_defaults[d],
-		'frame_resize': 112, 'frame_resample': 1, 'input_size': 112,
-		'frames_per_clip': 40, 'space_between_frames': 2,
-		'eval_frames_per_clip': 40, 'eval_space_between_frames': 2,
-		'clip_len': 32, 'clip_location': 'random', 'clip_step': 1,
-		'eval_clip_len': 32, 'eval_clip_location': 'center', 'eval_clip_step': 1,
-	    'model': 'models.SChiNet.SChiNet',
-		'enc_kernel_sizes': ((11, 7, 7), (3, 35, 35)), 'enc_strides': ((4, 2, 2), (2, 16, 16)), 'enc_channels': (64, 64),
-	    'chi_stages': ((64, 64, 4, 2), (64, 64, 4, 4), (64, 64, 8, 4), (64, 64, 8, 8)), 'fmap_size': (3, 3), 'head_regroup_post': False,
-		'token_dim': (2, 3, 4), 'x_dim': (3, 2), 'res_kernel_size': 3, 'shared_map': False, 'fullconv': False,
+	schinet['chi_mixed_' + chi_mode + '_' + p + '_' + lr + '_' + d] = {
+		**data_defaults_large_clip[d],
+		'model': 'models.SChiNet_chi_mixed.SChiNet',
+		**chi_params[chi_mode],
+		'chi_stages': ((*chi_params[chi_mode]['enc_channels'], 4, 2), (*chi_params[chi_mode]['enc_channels'], 8, 2)),
+		'fmap_size': (8, 7), 'head_regroup_post': False, 'res_kernel_size': 3, 'shared_map': False, 'fullconv': True,
+		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'chi_norm': 'models.SChiNet.TokenBatchNorm', # torch.nn.LayerNorm, #
+		'init_mode': 'xavier_normal', 'disable_wd_for_pos_emb': False, 'drop': 0., 'final_drop': 0.5,
+		**precisions[p],
+		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
+		**sched_params[d],
+	}
+
+	schinet['path_2plus1_' + chi_mode + '_' + p + '_' + lr + '_' + d] = {
+		**data_defaults_large_clip[d],
+		'model': 'models.SChiNet_path_2plus1.SChiNet',
+		**chi_params[chi_mode],
+		'chi_stages': ((*chi_params[chi_mode]['enc_channels'], 4, 2), (*chi_params[chi_mode]['enc_channels'], 8, 2)),
+		'fmap_size': (8, 7), 'head_regroup_post': False, 'res_kernel_size': 3, 'shared_map': False, 'fullconv': True,
+		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'chi_norm': 'models.SChiNet.TokenBatchNorm', # torch.nn.LayerNorm, #
+		'init_mode': 'xavier_normal', 'disable_wd_for_pos_emb': False, 'drop': 0., 'final_drop': 0.5,
+		**precisions[p],
+		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
+		**sched_params[d],
+	}
+
+	schinet['conv_2plus1_' + chi_mode + '_' + p + '_' + lr + '_' + d] = {
+		**data_defaults_large_clip[d],
+		'model': 'models.SChiNet_conv_2plus1.SChiNet',
+		**chi_params[chi_mode],
+		'chi_stages': ((*chi_params[chi_mode]['enc_channels'], 4, 2), (*chi_params[chi_mode]['enc_channels'], 8, 2)),
+		'fmap_size': (8, 7), 'head_regroup_post': False, 'res_kernel_size': 3, 'shared_map': False, 'fullconv': True,
+		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'chi_norm': 'models.SChiNet.TokenBatchNorm', # torch.nn.LayerNorm, #
+		'init_mode': 'xavier_normal', 'disable_wd_for_pos_emb': False, 'drop': 0., 'final_drop': 0.5,
+		**precisions[p],
+		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
+		**sched_params[d],
+	}
+
+	schinet['xl_' + chi_mode + '_' + p + '_' + lr + '_' + d] = {
+		**data_defaults_large_clip[d],
+		'model': 'models.SChiNet.SChiNet',
+		**chi_params[chi_mode],
+		'chi_stages': ((*chi_params[chi_mode]['enc_channels'], 4, 4), (*chi_params[chi_mode]['enc_channels'], 4, 8), (*chi_params[chi_mode]['enc_channels'], 8, 16)),
+		'fmap_size': (8, 7), 'head_regroup_post': False, 'res_kernel_size': 3, 'shared_map': False, 'fullconv': True,
 		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'chi_norm': 'models.SChiNet.TokenBatchNorm', # torch.nn.LayerNorm, #
 		'init_mode': 'kaiming_normal', 'disable_wd_for_pos_emb': False, 'drop': 0., 'final_drop': 0.5,
-	    'precision': precisions[p], 'qat': p == 'f16-qat', 'stretch': (.1, .1, .1) if p == 'f16' else (1, 1, 1),
+		**precisions[p],
 		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
-		'epochs': 150 if d.startswith('kinetics') else 50, 'sched_milestones': range(50, 150, 10) if d.startswith('kinetics') else range(25, 50, 5), 'sched_decay': 0.5,
-		#'epochs': 100, 'sched_milestones': [40, 70, 90], 'sched_decay': 0.1,
-		'warmup_epochs': 25, 'warmup_gamma': 10,
+		**sched_params[d],
 	}
+
+	schinet['chi_conv_xl_' + chi_mode + '_' + p + '_' + lr + '_' + d] = {
+		**data_defaults_large_clip[d],
+		'model': 'models.SChiNet_chi_conv.SChiNet',
+		**chi_params[chi_mode],
+		'chi_stages': ((*chi_params[chi_mode]['enc_channels'], 4, 4), (*chi_params[chi_mode]['enc_channels'], 4, 8), (*chi_params[chi_mode]['enc_channels'], 8, 16)),
+		'fmap_size': (8, 7), 'head_regroup_post': False, 'res_kernel_size': 3, 'shared_map': False, 'fullconv': True,
+		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'chi_norm': 'models.SChiNet.TokenBatchNorm', # torch.nn.LayerNorm, #
+		'init_mode': 'xavier_normal', 'disable_wd_for_pos_emb': False, 'drop': 0., 'final_drop': 0.5,
+		**precisions[p],
+		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
+		**sched_params[d],
+	}
+
+	schinet['chi_mixed_xl_' + chi_mode + '_' + p + '_' + lr + '_' + d] = {
+		**data_defaults_large_clip[d],
+		'model': 'models.SChiNet_chi_mixed.SChiNet',
+		**chi_params[chi_mode],
+		'chi_stages': ((*chi_params[chi_mode]['enc_channels'], 4, 4), (*chi_params[chi_mode]['enc_channels'], 4, 8), (*chi_params[chi_mode]['enc_channels'], 8, 16)),
+		'fmap_size': (8, 7), 'head_regroup_post': False, 'res_kernel_size': 3, 'shared_map': False, 'fullconv': True,
+		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'chi_norm': 'models.SChiNet.TokenBatchNorm', # torch.nn.LayerNorm, #
+		'init_mode': 'xavier_normal', 'disable_wd_for_pos_emb': False, 'drop': 0., 'final_drop': 0.5,
+		**precisions[p],
+		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
+		**sched_params[d],
+	}
+
+	schinet['path_2plus1_xl_' + chi_mode + '_' + p + '_' + lr + '_' + d] = {
+		**data_defaults_large_clip[d],
+		'model': 'models.SChiNet_path_2plus1.SChiNet',
+		**chi_params[chi_mode],
+		'chi_stages': ((*chi_params[chi_mode]['enc_channels'], 4, 4), (*chi_params[chi_mode]['enc_channels'], 4, 8), (*chi_params[chi_mode]['enc_channels'], 8, 16)),
+		'fmap_size': (8, 7), 'head_regroup_post': False, 'res_kernel_size': 3, 'shared_map': False, 'fullconv': True,
+		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'chi_norm': 'models.SChiNet.TokenBatchNorm', # torch.nn.LayerNorm, #
+		'init_mode': 'xavier_normal', 'disable_wd_for_pos_emb': False, 'drop': 0., 'final_drop': 0.5,
+		**precisions[p],
+		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
+		**sched_params[d],
+	}
+
+	schinet['conv_2plus1_xl_' + chi_mode + '_' + p + '_' + lr + '_' + d] = {
+		**data_defaults_large_clip[d],
+		'model': 'models.SChiNet_conv_2plus1.SChiNet',
+		**chi_params[chi_mode],
+		'chi_stages': ((*chi_params[chi_mode]['enc_channels'], 4, 4), (*chi_params[chi_mode]['enc_channels'], 4, 8), (*chi_params[chi_mode]['enc_channels'], 8, 16)),
+		'fmap_size': (8, 7), 'head_regroup_post': False, 'res_kernel_size': 3, 'shared_map': False, 'fullconv': True,
+		'act': 'torch.nn.ReLU', 'norm': 'models.modutils.BatchNorm', 'chi_norm': 'models.SChiNet.TokenBatchNorm', # torch.nn.LayerNorm, #
+		'init_mode': 'xavier_normal', 'disable_wd_for_pos_emb': False, 'drop': 0., 'final_drop': 0.5,
+		**precisions[p],
+		'batch_size': 20, 'lr': lrs[lr], 'wdecay': 5e-5 if d.startswith('kinetics') else 5e-3,
+		**sched_params[d],
+	}
+
 

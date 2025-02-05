@@ -362,7 +362,6 @@ class VideoDatasetFolder(Dataset):
 	def __len__(self):
 		return len(self.file_names) * self.clips_per_video * self.crops_per_video
 
-
 class VideoDataManager:
 	def __init__(self, config, dataseed):
 		self.dataseed = dataseed
@@ -707,6 +706,71 @@ class KineticsDataManager(VideoDataManager):
 								   frame_jitter=frame_jitter, clips_per_video=self.clips_per_video, crops_per_video=self.crops_per_video,
 								   transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
 		return split
+
+class KineticsClipDataManager(KineticsDataManager):
+	def get_dataset_name(self):
+		return 'kinetics{}clp'.format(self.dataset_version)
+
+	def acquire_dataset_metadata(self):
+		self.dataset_name = self.get_dataset_name()
+		self.data_folder = os.path.join(P.DATASET_FOLDER, self.dataset_name)
+		self.resaving = backend_str_repr(self.backend) != '' or self.frame_resize is not None or self.frame_resample > 1
+		self.target_data_folder = self.data_folder if not self.resaving else self.data_folder + clip_str_repr(clip_size=self.frame_resize, clip_len=None, clip_location=None, clip_step=self.frame_resample, min_clip_step=self.min_frame_resample, max_clip_step=self.max_frame_resample, auto_len=self.auto_resample_num_frames) + backend_str_repr(self.backend)
+		clip_opts = dict(clips_per_video=self.clips_per_video, crops_per_video=self.crops_per_video) if self.cliplvl_split else {}
+		dataset = VideoDatasetFolder(os.path.join(self.data_folder, 'train', 'train'), os.path.join(self.target_data_folder, 'train'), frame_resize=self.frame_resize, frame_resample=self.frame_resample,
+									 min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, backend=self.backend,
+									 auto_resample_num_frames=self.auto_resample_num_frames, stop_on_invalid_frames=self.stop_on_invalid_frames, **clip_opts)
+		self.dataset_size = len(dataset)
+		self.input_channels = dataset[0][0].shape[1]
+		self.num_classes = len(dataset.classes)
+
+	def prepare_rnd_indices(self, config):
+		self.splitsizes = config.get('splitsizes', (0.70, 0.15))
+		if sum(self.splitsizes) > 1:
+			raise ValueError("The sum of splitsizes must be <= 1, found {}".format(self.splitsizes))
+		self.trn_size = int(self.splitsizes[0]*self.dataset_size)
+		self.val_size = int(self.splitsizes[1]*self.dataset_size)
+		self.trn_size = self.trn_size + self.val_size
+		self.val_size = 0
+		self.tst_size = self.dataset_size - self.trn_size - self.val_size
+		self.indices = list(range(self.dataset_size))
+		random.shuffle(self.indices)
+		self.trn_idx = self.indices[:self.trn_size]
+		self.val_idx = self.indices[self.trn_size:-self.tst_size]
+		self.tst_idx = self.indices[-self.tst_size:]
+
+	def get_trn_split(self, frames_per_clip=16, clip_location='start', space_between_frames=1,
+					  min_space_between_frames=None, max_space_between_frames=None,
+					  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
+					  frame_jitter=None, transform=None):
+		KineticsDownloader(self.data_folder, num_classes=self.dataset_version, split='train').download_if_needed()
+		trn_folder, target_trn_folder = os.path.join(self.data_folder, 'train', 'train'), os.path.join(self.target_data_folder, 'train')
+		clip_opts = dict(clips_per_video=self.clips_per_video, crops_per_video=self.crops_per_video) if self.cliplvl_split else {}
+		split = VideoDatasetFolder(trn_folder, target_trn_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
+								   min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+								   backend=self.backend, frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+								   min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+								   auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+								   frame_jitter=frame_jitter, **clip_opts, transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+		split = Subset(split, self.trn_idx)
+		return split
+
+	def get_tst_split(self, frames_per_clip=16, clip_location='start', space_between_frames=1,
+					  min_space_between_frames=None, max_space_between_frames=None,
+					  auto_frames=None, min_auto_frames=None, max_auto_frames=None,
+					  frame_jitter=None, transform=None):
+		KineticsDownloader(self.data_folder, num_classes=self.dataset_version, split='train').download_if_needed()
+		tst_folder, target_tst_folder = os.path.join(self.data_folder, 'train', 'train'), os.path.join(self.target_data_folder, 'train')
+		split = VideoDatasetFolder(tst_folder, target_tst_folder, frame_resize=self.frame_resize, frame_resample=self.frame_resample,
+								   min_frame_resample=self.min_frame_resample, max_frame_resample=self.max_frame_resample, auto_resample_num_frames=self.auto_resample_num_frames,
+								   backend=self.backend, frames_per_clip=frames_per_clip, clip_location=clip_location, space_between_frames=space_between_frames,
+								   min_space_between_frames=min_space_between_frames, max_space_between_frames=max_space_between_frames,
+								   auto_frames=auto_frames, min_auto_frames=min_auto_frames, max_auto_frames=max_auto_frames,
+								   frame_jitter=frame_jitter, clips_per_video=self.clips_per_video, crops_per_video=self.crops_per_video,
+								   transform=transform, stop_on_invalid_frames=self.stop_on_invalid_frames)
+		split = Subset(split, self.tst_idx if self.cliplvl_split else [idx*self.crops_per_video*self.clips_per_video + i for idx in self.tst_idx for i in range(self.crops_per_video*self.clips_per_video)])
+		return split
+
 
 # Custom object to obtain data augmentation transformations
 class AugmentManager:

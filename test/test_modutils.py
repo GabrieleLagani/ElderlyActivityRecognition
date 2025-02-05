@@ -40,20 +40,20 @@ def test_conv():
 
 def test_conv_grp():
 	tolerance = 1e-4
-	l1 = nn.Conv3d(16, 64, kernel_size=3, stride=2, padding=1, groups=2)
-	l2 = MultiHeadConv3d(8, 32, heads=2, headsize=8, shared_map=False, kernel_size=3, stride=2, padding=1)
+	l1 = nn.Conv3d(32, 64, kernel_size=3, stride=2, padding=1, groups=4)
+	l2 = MultiHeadConv3d(8, 16, heads=4, headsize=8, shared_map=False, kernel_size=3, stride=2, padding=1)
 	print(l1.weight.shape, l2.weight.shape)
 	l1.weight.data = l2.weight.reshape(64, 8, 3, 3, 3)
 	l1.bias.data = l2.bias.reshape(-1)
 
 	print(l1.weight.shape, l2.weight.shape)
 
-	x = torch.randn(20, 16, 16, 32, 32)
+	x = torch.randn(20, 32, 16, 32, 32)
 
 	y1 = l1(x)
 	#y2 = l2(x)
-	y2 = l2(x.reshape(x.shape[0], 2, 8, *x.shape[2:]).transpose(1, 2).reshape(x.shape[0], -1, *x.shape[2:]))
-	y2 = y2.reshape(y2.shape[0], 32, 2, *y2.shape[2:]).transpose(1, 2).reshape(y2.shape[0], -1, *y2.shape[2:])
+	y2 = l2(x.reshape(x.shape[0], 4, 8, *x.shape[2:]).transpose(1, 2).reshape(x.shape[0], -1, *x.shape[2:]))
+	y2 = y2.reshape(y2.shape[0], 16, 4, *y2.shape[2:]).transpose(1, 2).reshape(y2.shape[0], -1, *y2.shape[2:])
 
 	print(y1.shape, y2.shape)
 
@@ -77,4 +77,7 @@ def test_groups():
 
 	assert error < tolerance
 
+
+if __name__ == '__main__':
+	test_conv_grp()
 

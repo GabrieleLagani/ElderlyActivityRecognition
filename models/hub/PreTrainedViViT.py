@@ -11,7 +11,6 @@ import params as P
 class PreTrainedViViT(nn.Module):
 	def __init__(self, config, num_classes):
 		super().__init__()
-
 		self.net = transformers.VivitForVideoClassification.from_pretrained('google/vivit-b-16x2-kinetics400')
 
 	def forward(self, x):

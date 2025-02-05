@@ -13,10 +13,17 @@ def channel_split(x, splits):
 	for i in range(len(splits)): split_idx.append(split_idx[-1] + splits[i])
 	return (x[:, split_idx[i]:split_idx[i + 1]] for i in range(len(splits)))
 
+def stable_softmax(x, dim=None, ub=1e4):
+	m = torch.max(x, dim=dim, keepdim=True)[0]
+	n = x.numel() if dim is None else utils.shape2size( [x.shape[d] for d in (dim if isinstance(dim, (list, tuple)) else [dim])] )
+	c = m - torch.log(torch.tensor(ub)/n)
+	return (x - c).softmax(dim=dim)
+
 def qkv_aggregate(q, k, v):
 	scale = v.shape[-1] ** -0.5
 	attn = (q*scale) @ (k.transpose(-2, -1)*scale)
 	attn = attn.softmax(dim=-1)
+	#attn = stable_softmax(attn, dim=-1)
 	res = (attn @ v)
 	return res
 
@@ -327,6 +334,39 @@ class MultiHeadConv3d(MultiHeadLinear):
 			return x
 		return self.apply_conv_filters(x)
 
+class MultiHeadConv2Plus1d(MultiHeadConv3d):
+	def __init__(self, in_channels=512, out_channels=512, heads=1, headsize=512, shared_map=False, bias=True,
+				 kernel_size=3, stride=1, padding=0, token_dim=None, transposed=False):
+		nn.Module.__init__(self)
+		self.in_channels = in_channels
+		self.out_channels = out_channels
+		self.heads = heads
+		self.headsize = headsize
+		self.shared_map = shared_map
+		self.use_bias = bias
+		self.kernel_size = kernel_size
+		self.stride = stride
+		self.padding = padding
+		self.token_dim = token_dim
+		self.transposed = transposed
+
+		kernel_size, stride, padding = _triple(kernel_size), _triple(stride), _triple(padding) if isinstance(padding, int) else padding
+		full_size = kernel_size[0] * kernel_size[1] * kernel_size[2] * in_channels * out_channels
+		split_size = kernel_size[1] * kernel_size[2] * in_channels + kernel_size[0] * out_channels
+		#interm_channels = in_channels if transposed else full_size // split_size # More channels, but more space occupancy
+		interm_channels = in_channels # Fewer channels, but more lightweight
+		self.spatial_conv = MultiHeadConv3d(in_channels=in_channels, out_channels=interm_channels, heads=heads, headsize=headsize, shared_map=shared_map, bias=bias,
+				 kernel_size=(1, kernel_size[1], kernel_size[2]), stride=(1, stride[1], stride[2]), padding=padding if isinstance(padding, str) else (0, padding[1], padding[2]), token_dim=token_dim, transposed=transposed)
+		self.temporal_conv = MultiHeadConv3d(in_channels=interm_channels, out_channels=out_channels, heads=heads, headsize=headsize, shared_map=shared_map, bias=bias,
+				 kernel_size=(kernel_size[0], 1, 1), stride=(stride[0], 1, 1), padding=padding if isinstance(padding, str) else (padding[0], 1, 2), token_dim=token_dim, transposed=transposed)
+
+	def new(self):
+		return MultiHeadConv2Plus1d(self.in_channels, self.out_channels, self.heads, self.headsize, shared_map=self.shared_map,
+							   bias=self.use_bias, kernel_size=self.kernel_size, stride=self.stride, padding=self.padding,
+							   token_dim=self.token_dim, transposed=self.transposed)
+
+	def forward(self, x):
+		return self.temporal_conv(self.spatial_conv(x))
 
 class PosEmbedding(nn.Module):
 	def __init__(self, size, channels=64, heads=8, shared_map=False, token_dim=None, transposed=False, cape_reg=0):

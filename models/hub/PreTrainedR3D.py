@@ -11,7 +11,6 @@ import params as P
 class PreTrainedR3D(nn.Module):
     def __init__(self, config, num_classes):
         super().__init__()
-        torch.hub.set_dir(os.path.join(P.ASSETS_FOLDER, 'hub'))
         self.net = r3d_18(pretrained=True)
 
     def forward(self, x):

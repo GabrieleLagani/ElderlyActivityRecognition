@@ -125,7 +125,7 @@ def load_dict(path, device='cpu'):
 
 # Remaps tensors in state dict to the desired dtype
 def map_dtype(state_dict, dtype=torch.float):
-	return {k: map_dtype(v, dtype) if isinstance(v, dict) else v.to(dtype=dtype) if isinstance(v, torch.Tensor) else v for k, v in state_dict.items()}
+	return {k: map_dtype(v, dtype) if isinstance(v, dict) else (v.to(dtype=dtype) if isinstance(v, torch.Tensor) else v) for k, v in state_dict.items()}
 
 # Retrieve a custom module or object provided by the user by full name in dot notation as string. If the object is a
 # dictionary, it is possible to retrieve a specific element of the dictionary with the square bracket indexing notation.

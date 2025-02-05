@@ -11,7 +11,6 @@ import params as P
 class PreTrainedTimesFormer(nn.Module):
 	def __init__(self, config, num_classes):
 		super().__init__()
-
 		self.net = transformers.TimesformerForVideoClassification.from_pretrained('facebook/timesformer-base-finetuned-k400')
 
 	def forward(self, x):
