@@ -8,8 +8,8 @@ datasets = {'ucf101': 'dataloaders.videodataset.UCF101DataManager',
 
 precisions = {
 	'f16': {'precision': 'float16', 'qat': False, 'stretch': (1e2, 1e-1, 1e2)},
-	'f16-qsqr': {'precision': 'float16', 'qat': False, 'qpow': 2, 'qaff': -0.5, 'q_grad_diff': True, 'stretch': (1e0, 1e-1, 1e0)}, # Reduce range, increase precision of medium values
-	'f16-qroot': {'precision': 'float16', 'qat': False, 'qpow': 0.5, 'qaff': -0.25, 'q_grad_diff': False, 'stretch': (1e2, 1e-1, 1e2)}, # Reduce precision of large values, increase precision of small values
+	'f16-sqr': {'precision': 'float16', 'qat': False, 'qpow': 2, 'qaff': -0.5, 'q_grad_diff': True, 'stretch': (1e0, 1e-1, 1e0)}, # Reduce range, increase precision of medium values
+	'f16-root': {'precision': 'float16', 'qat': False, 'qpow': 0.5, 'qaff': -0.25, 'q_grad_diff': False, 'stretch': (1e2, 1e-1, 1e2)}, # Reduce precision of large values, increase precision of small values
 	'f16-qat': {'precision': 'float16', 'qat': True, 'stretch': (1, 1, 1)},
 	'f32': {'precision': 'float32', 'qat': False, 'stretch': (1, 1, 1)},
 }
