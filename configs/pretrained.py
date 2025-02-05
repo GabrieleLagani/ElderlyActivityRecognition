@@ -3,7 +3,7 @@ schinet = {
         'augment_manager': 'dataloaders.videodataset.LightAugmentManager',
         'num_workers': 4, 'workers_on_gpu': False, 'processing_dtype': 'uint8',
         'frame_resize': 112, 'frame_resample': 1, 'min_frame_resample': None, 'max_frame_resample': None, 'auto_resample_num_frames': 80,
-        'frames_per_clip': 80, 'space_between_frames': 2, 'min_space_between_frames': None, 'max_space_between_frames': None,
+        'frames_per_clip': 80, 'space_between_frames': 2, 'min_space_between_frames': None, 'max_space_between_frames': None, # Check frames per clip: 80,
         'frame_jitter': None, 'auto_frames': None, 'min_auto_frames': None, 'max_auto_frames': None,
         'eval_frames_per_clip': 11*32, 'eval_space_between_frames': 2, 'eval_auto_frames': None, 'eval_frame_jitter': None,
 		'preproc_frames_per_clip': 20, 'preproc_space_between_frames': 1, 'preproc_auto_frames': None, 'preproc_frame_jitter': None,

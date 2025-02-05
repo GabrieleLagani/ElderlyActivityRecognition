@@ -63,5 +63,5 @@ data_defaults = {d: {
 	'eval_clip_len': 16, 'eval_clip_location': 'center', 'eval_clip_step': 1, 'eval_auto_len': None,
 	'preproc_clip_len': 16, 'preproc_clip_location': 'center', 'preproc_clip_step': 1, 'preproc_auto_len': None,
 } for d in datasets}
-data_defaults_large_clip = {d: {**data_defaults, 'frames_per_clip': 80, 'eval_frames_per_clip': 80, 'clip_len': 64, 'eval_clip_len': 64} for d in datasets}
+data_defaults_large_clip = {d: {**data_defaults[d], 'frames_per_clip': 80, 'eval_frames_per_clip': 80, 'clip_len': 64, 'eval_clip_len': 64} for d in datasets}
 
