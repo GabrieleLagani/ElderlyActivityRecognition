@@ -5,6 +5,7 @@ chi_params = {
 	'st': {'enc_kernel_sizes': ((21, 7, 7), (1, 35, 35)), 'enc_strides': ((8, 2, 2), (1, 16, 16)), 'enc_channels': (64, 64), 'token_dim': (2, 3, 4), 'x_dim': ('s', 't'), 'alternate_attn': False, 'convattn': True},
 	#'sc': {'enc_kernel_sizes': ((1, 7, 7), (1, 21, 21)), 'enc_strides': ((1, 2, 2), (1, 8, 8)), 'enc_channels': (8, 64), 'token_dim': (2, 3, 4), 'x_dim': ('s', 'c'), 'alternate_attn': False, 'convattn': True},
 	'sc': {'enc_kernel_sizes': ((1, 7, 7), (1, 35, 35)), 'enc_strides': ((1, 2, 2), (1, 16, 16)), 'enc_channels': (8, 64), 'token_dim': (2, 3, 4), 'x_dim': ('s', 'c'), 'alternate_attn': False, 'convattn': True},
+	#'tc': {'enc_kernel_sizes': ((1, 7, 7), (21, 7, 7)), 'enc_strides': ((1, 2, 2), (8, 2, 2)), 'enc_channels': (8, 64), 'token_dim': (2, 3, 4), 'x_dim': ('t', 'c'), 'alternate_attn': False, 'convattn': False},
 	'tc': {'enc_kernel_sizes': ((1, 7, 7), (21, 7, 7)), 'enc_strides': ((1, 2, 2), (8, 2, 2)), 'enc_channels': (8, 64), 'token_dim': (2, 3, 4), 'x_dim': ('t', 'c'), 'alternate_attn': False, 'convattn': True},
 }
 
