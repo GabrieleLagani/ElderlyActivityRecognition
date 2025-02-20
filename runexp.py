@@ -170,7 +170,7 @@ class Quantizer:
 		# out2 = out2 + self.qaff
 		out = self._clamp(out1, min=0) + self._clamp(out2, max=0)
 		if self._invalid_value(out): raise RuntimeError("Parameter is nan")
-		return out
+		return out.to(dtype=P.DTYPE)
 
 	def rescale_loss(self, l):
 		return self.stretch_v * l
