@@ -1,16 +1,13 @@
 
 Experiments on human activity recognition from video based on deep learning.
-Research supported by project INAROS (INtelligenza ARtificiale per il 
-mOnitoraggio e Supporto agli anziani), aimed at the development of deep 
-learning technologies for video processing for elderly assistance in smart 
-home and smart healthcare applications.
-
-## Models
 This repository provides implementations of various deep learning models for 
 video processing. In particular, we also provide the code for our 
 Convolutional-Attentional 3D (CA3D) model (based on the CAST - 
-Convolutional-Attentional Spatio Temporal block).
+Convolutional-Attentional Spatio Temporal block), and the Spatio-temporal 
+Chi-stream Network (SChi-Net) model (based on the Chi-Stream block).
 Code for training and evaluating the models on various datasets is available.
+These are lightweight architectures, designed for computational efficiency,
+and suitable for edge applications and constrained or consumer hardware.
 
 ## Usage
 Launch experiment with:
@@ -40,6 +37,12 @@ Where:
 - Python  3.10
 - PyTorch 2.0.1
 
+## Acknowledgements
+Research supported by project INAROS (INtelligenza ARtificiale per il 
+mOnitoraggio e Supporto agli anziani), aimed at the development of deep 
+learning technologies for video processing for elderly assistance in smart 
+home and smart healthcare applications.
+
 ## Contacts
-Gabriele Lagani: gabriele.lagani@phd.unipi.it
+Gabriele Lagani: gabriele.lagani@isti.cnr.it
  
