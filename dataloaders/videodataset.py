@@ -141,7 +141,7 @@ class VideoDatasetFolder(Dataset):
 		self.transform = transform
 		self.stop_on_invalid_frames = stop_on_invalid_frames
 		self.default_shape = default_shape
-		DATA_DESCRIPTOR_FILE = os.path.join(self.target_data_folder.replace(P.DATASET_FOLDER, P.ASSETS_FOLDER), 'datadesc.pt')
+		DATA_DESCRIPTOR_FILE = os.path.join(self.target_data_folder.replace(P.DATASET_FOLDER, os.path.join(P.ASSETS_FOLDER, 'datafiles')), 'datadesc.pt')
 
 		data_dict = None
 		try: # Try to load dataset information from file
@@ -605,7 +605,7 @@ class VideoDataManager:
 		return self.tst_set
 
 	def get_stats(self):
-		STATS_FILE = os.path.join(self.target_data_folder.replace(P.DATASET_FOLDER, P.ASSETS_FOLDER), 'stats_seed-{}{}{}.pt'.format(self.dataseed,
+		STATS_FILE = os.path.join(self.target_data_folder.replace(P.DATASET_FOLDER, os.path.join(P.ASSETS_FOLDER, 'datafiles')), 'stats_seed-{}{}{}.pt'.format(self.dataseed,
 			clip_str_repr(clip_size=self.input_size, clip_len=self.preproc_frames_per_clip, clip_location=self.preproc_clip_location, clip_step=self.preproc_space_between_frames, min_clip_step=self.preproc_min_space_between_frames, max_clip_step=self.preproc_max_space_between_frames, auto_len=self.preproc_auto_frames, min_auto_len=self.preproc_min_auto_frames, max_auto_len=self.preproc_max_auto_frames, frame_jitter=self.preproc_frame_jitter),
 			clip_str_repr(clip_size=self.input_size, clip_len=self.preproc_clip_len, clip_location=self.preproc_clip_location, clip_step=self.preproc_clip_step, min_clip_step=self.preproc_min_clip_step, max_clip_step=self.preproc_max_clip_step, auto_len=self.preproc_auto_len, min_auto_len=self.preproc_min_auto_len, max_auto_len=self.preproc_max_auto_len)))
 		stats_dict = None
