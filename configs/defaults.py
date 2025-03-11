@@ -44,7 +44,7 @@ sched_params = {
     'kinetics400clp': {
 		'epochs': 60, 'sched_milestones': range(30, 60, 3), 'sched_decay': 0.5,
 		#'epochs': 100, 'sched_milestones': [40, 70, 90], 'sched_decay': 0.1,
-		'warmup_epochs': 5, 'warmup_gamma': 10
+		'warmup_epochs': 10, 'warmup_gamma': 10
 	},
 }
 
