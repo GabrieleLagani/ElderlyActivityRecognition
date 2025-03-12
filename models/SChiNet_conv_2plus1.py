@@ -408,6 +408,7 @@ class SChiNet(nn.Module):
 		stages = config.get('chi_stages', ((64, 64, 4, 2), (64, 64, 8, 2)))
 		token_dim = config.get('token_dim', (2, 3, 4))
 		x_dim = config.get('x_dim', ('s', 't'))
+		shrink_min_dim = config.get('shrink_min_dim', True)
 		alternate_attn = config.get('alternate_attn', False)
 		fullconv = config.get('fullconv', False)
 		shared_map = config.get('shared_map', False)
@@ -449,8 +450,12 @@ class SChiNet(nn.Module):
 			channels2 = (channels2 * in_heads) // heads
 			out_channels2 = (out_embed_dim2 * out_heads) // heads
 
-			s1 = (2 if min(clip_len1, clip_len2) > self.fmap_size[0] else 1, 2 if min(img_size1, img_size2) > self.fmap_size[1] else 1, 2 if min(img_size1, img_size2) > self.fmap_size[1] else 1)
-			s2 = s1 #(2 if clip_len2 > self.fmap_size[0] else 1, 2 if img_size2 > self.fmap_size[1] else 1, 2 if img_size2 > self.fmap_size[1] else 1)
+			if shrink_min_dim:
+				s1 = (2 if min(clip_len1, clip_len2) > self.fmap_size[0] else 1, 2 if min(img_size1, img_size2) > self.fmap_size[1] else 1, 2 if min(img_size1, img_size2) > self.fmap_size[1] else 1)
+				s2 = s1
+			else:
+				s1 = (2 if clip_len1 > self.fmap_size[0] else 1, 2 if img_size1 > self.fmap_size[1] else 1, 2 if img_size1 > self.fmap_size[1] else 1)
+				s2 = (2 if clip_len2 > self.fmap_size[0] else 1, 2 if img_size2 > self.fmap_size[1] else 1, 2 if img_size2 > self.fmap_size[1] else 1)
 
 			layers.append(SChiStage(channels1, out_channels1, channels2, out_channels2, heads,
                     kernel_size=3, stride1=s1, stride2=s2, res_kernel_size=r_k, depth=depth, fullconv=fullconv, shared_map=shared_map, headwise_map=headwise_map,
