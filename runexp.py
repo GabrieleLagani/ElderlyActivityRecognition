@@ -235,14 +235,14 @@ class Experiment:
 			model_path = self.pretrain_path.replace('<token>', self.token if self.token is not None else '')
 			print("Initializing model from pre-trained dictionary at {}...".format(model_path))
 			try: print(self.model.load_state_dict(utils.map_dtype(utils.load_dict(model_path), dtype=P.DTYPE), strict=False))
-			except: print("WARNING: no model found in {}. Using model initialized from scratch.".format(model_path))
+			except: print("WARNING: no compatible model found in {}. Using model initialized from scratch.".format(model_path))
 			if self.model.pre_params is not None:
 				self.model.pre_params = nn.ParameterDict({n.replace('.', '/'): self.quantizer.param_to_pre_param(p) for n, p in self.model.named_parameters() if not n.startswith('pre_params')})
 		if self.mode == 'test': # Load pretrained models for testing if necessary
 			model_path = self.best_model_path
 			print("Loading pre-trained model from {}...".format(model_path))
 			try: self.model.load_state_dict(utils.map_dtype(utils.load_dict(model_path), dtype=P.DTYPE))
-			except: print("WARNING: no model found in {}. Using untrained model for testing.".format(model_path))
+			except: print("WARNING: no compatible model found in {}. Using untrained model for testing.".format(model_path))
 		if self.model.pre_params is not None: self.model.pre_params.to(dtype=self.quantizer.preparam_precision)
 		print("Model loaded!")
 
