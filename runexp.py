@@ -44,12 +44,7 @@ class AggregateEvaluator:
 
 	def update(self, idx, outputs, labels):
 		with torch.no_grad():
-			idx = idx // self.crops_per_item
-			rows = []
-			for i in idx:
-				if i not in self.idx2row: self.idx2row[i] = len(self.idx2row)
-				rows.append(self.idx2row[i])
-			rows = torch.tensor(rows, dtype=torch.int64, device=P.DEVICE)
+			rows = idx // self.crops_per_item
 			self.outputs[rows] += outputs
 			self.outputs_smax[rows] += outputs.softmax(dim=1)
 			self.labels[rows] = labels
