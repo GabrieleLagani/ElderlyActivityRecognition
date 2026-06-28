@@ -201,33 +201,6 @@ class MixedResTubeletEnc(nn.Module):
 		self.pos_embed1 = nn.Parameter(torch.empty([]), requires_grad=True)
 		self.p1 = nn.Parameter(torch.empty([]), requires_grad=True)
 
-		kernel_size1_p = (max(k1, k2) for k1, k2 in zip(kernel_size1, kernel_size2))
-		stride1_p = (max(s1, s2) for s1, s2 in zip(stride1, stride2))
-		self.emb1_p = nn.Sequential(
-				CBlock(in_channels, out_channels1, 1,
-					conv=MultiHeadConv3d(in_channels, out_channels1, 1, in_channels,
-					       shared_map=False, kernel_size=kernel_size1_p, stride=stride1_p, padding='same'),
-					proj=Column(MultiHeadResBlock(out_channels1, 1,
-						conv=MultiHeadConv3d(out_channels1, out_channels1, 1, out_channels1, shared_map=False,
-							   kernel_size=(1, res_kernel_size, res_kernel_size), stride=1, padding='same'),
-						act=act, norm=norm, order='CANCANS'), depth=0, recurrent=False),
-		        	act=act, norm=norm, order='CANPN'),
-				#nn.Conv3d(in_channels, out_channels1, kernel_size1, stride1, utils.get_padding_same(kernel_size1)),
-				#nn.ReLU(),
-				#nn.BatchNorm3d(out_channels1),
-				CBlock(out_channels1, 2*out_channels1, 1,
-					conv=MultiHeadConv3d(out_channels1, 2*out_channels1, 1, out_channels1,
-					       shared_map=False, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding='same'),
-					proj=Column(MultiHeadResBlock(2*out_channels1, 1,
-						conv=MultiHeadConv3d(2*out_channels1, 2*out_channels1, 1, 2*out_channels1, shared_map=False,
-							   kernel_size=(1, res_kernel_size, res_kernel_size), stride=1, padding='same'),
-						act=act, norm=norm, order='CANCANS'), depth=2, recurrent=False),
-		        	act=act, norm=norm, order='CANPN'),
-				#nn.Conv3d(out_channels1, 2*out_channels1, 3, 2, utils.get_padding_same(3)),
-				#nn.ReLU(),
-				#nn.BatchNorm3d(2*out_channels1),
-			)
-
 		self.emb2 = nn.Sequential(
 				CBlock(in_channels, out_channels2, 1,
 					conv=MultiHeadConv3d(in_channels, out_channels2, 1, in_channels,
@@ -255,37 +228,9 @@ class MixedResTubeletEnc(nn.Module):
 		self.pos_embed2 = nn.Parameter(torch.empty([]), requires_grad=True)
 		self.p2 = nn.Parameter(torch.empty([]), requires_grad=True)
 
-		kernel_size2_p = (max(k1, k2) for k1, k2 in zip(kernel_size1, kernel_size2))
-		stride2_p = (max(s1, s2) for s1, s2 in zip(stride1, stride2))
-		self.emb2_p = nn.Sequential(
-				CBlock(in_channels, out_channels1, 1,
-					conv=MultiHeadConv3d(in_channels, out_channels1, 1, in_channels,
-					       shared_map=False, kernel_size=kernel_size2_p, stride=stride2_p, padding='same'),
-					proj=Column(MultiHeadResBlock(out_channels1, 1,
-						conv=MultiHeadConv3d(out_channels1, out_channels1, 1, out_channels1, shared_map=False,
-							   kernel_size=(1, res_kernel_size, res_kernel_size), stride=1, padding='same'),
-						act=act, norm=norm, order='CANCANS'), depth=0, recurrent=False),
-		        	act=act, norm=norm, order='CANPN'),
-				#nn.Conv3d(in_channels, out_channels1, kernel_size1, stride1, utils.get_padding_same(kernel_size1)),
-				#nn.ReLU(),
-				#nn.BatchNorm3d(out_channels1),
-				CBlock(out_channels1, 2*out_channels1, 1,
-					conv=MultiHeadConv3d(out_channels1, 2*out_channels1, 1, out_channels1,
-					       shared_map=False, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding='same'),
-					proj=Column(MultiHeadResBlock(2*out_channels1, 1,
-						conv=MultiHeadConv3d(2*out_channels1, 2*out_channels1, 1, 2*out_channels1, shared_map=False,
-							   kernel_size=(1, res_kernel_size, res_kernel_size), stride=1, padding='same'),
-						act=act, norm=norm, order='CANCANS'), depth=2, recurrent=False),
-		        	act=act, norm=norm, order='CANPN'),
-				#nn.Conv3d(out_channels1, 2*out_channels1, 3, 2, utils.get_padding_same(3)),
-				#nn.ReLU(),
-				#nn.BatchNorm3d(2*out_channels1),
-			)
-
 	def forward(self, x):
 		p_pool_dims = [ i for i in range(x.ndim) if i > 1 and dim2xdim[i] not in [strxdim2xdim[d] for d in self.x_dim] ]
-		x1, p1, x2, p2 = self.emb1(x), self.emb1_p(x), self.emb2(x), self.emb2_p(x)
-		if len(p_pool_dims) > 0: p1, p2 = p1.mean(dim=p_pool_dims, keepdims=True), p2.mean(dim=p_pool_dims, keepdims=True)
+		x1, x2 = self.emb1(x), self.emb2(x)
 		p_shape = [ 1 if i > 0 and dim2xdim[i+1] not in [strxdim2xdim[d] for d in self.x_dim] else min(s1, s2) for i, (s1, s2) in enumerate(zip(x1.shape[1:], x2.shape[1:])) ]
 		if self.pos_embed1.ndim == 0:
 			self.pos_embed1 = nn.Parameter(nn.init.xavier_normal_(torch.empty(*x1.shape[1:])), requires_grad=True)
@@ -295,7 +240,7 @@ class MixedResTubeletEnc(nn.Module):
 			self.pos_embed2 = nn.Parameter(nn.init.xavier_normal_(torch.empty(*x2.shape[1:])), requires_grad=True)
 		if self.p2.ndim == 0:
 			self.p2 = nn.Parameter(nn.init.xavier_normal_(torch.empty(p_shape)), requires_grad=True)
-		return self.pos_embed1.unsqueeze(0) + x1, self.p1.unsqueeze(0) + p1, self.pos_embed2.unsqueeze(0) + x2, self.p2.unsqueeze(0) + p2
+		return self.pos_embed1.unsqueeze(0) + x1, self.p1.unsqueeze(0).expand([x1.shape[0], *self.p1.shape]), self.pos_embed2.unsqueeze(0) + x2, self.p2.unsqueeze(0).expand([x2.shape[0], *self.p2.shape])
 
 class SChiStage(nn.Module):
 	def __init__(self, in_channels1, out_channels1, in_channels2, out_channels2, heads=1,
@@ -329,26 +274,12 @@ class SChiStage(nn.Module):
 		self.pw2_shape = None
 		self.chi = None
 
-		in_channels_b, out_channels_b = min(self.in_channels1, self.in_channels2), min(self.out_channels1, self.out_channels2)
-		sp = tuple((min(s1, s2) for s1, s2 in zip(_triple(stride1), _triple(stride2))))
-		kernel_size_b = tuple(1 if dim2xdim[i+2] not in self.x_dim else k for i, k in enumerate(_triple(kernel_size)))
-		res_kernel_size_b = tuple(1 if dim2xdim[i+2] not in self.x_dim else k for i, k in enumerate(_triple(res_kernel_size)))
-
 		self.pw1_a = CBlock(in_channels1, out_channels1, heads,
 					conv=MultiHeadConv3d(*((in_channels1*heads, out_channels1*heads, 1, in_channels1*heads) if fullconv else (in_channels1, out_channels1, heads, in_channels1)),
 					       shared_map=shared_map, kernel_size=kernel_size, stride=stride1, padding='same'),
 					proj=Column(MultiHeadResBlock(out_channels1, heads,
 						conv=MultiHeadConv3d(out_channels1, out_channels1, heads, out_channels1, shared_map=shared_map,
 							   kernel_size=res_kernel_size, stride=1, padding='same'),
-						act=act, norm=norm, order='CANCANS'), depth=depth, recurrent=False),
-		            act=act, norm=norm, order='CANPN')
-
-		self.pw1_b = CBlock(in_channels_b, out_channels_b, heads,
-					conv=MultiHeadConv3d(*((in_channels_b*heads, out_channels_b*heads, 1, in_channels_b*heads) if fullconv else (in_channels_b, out_channels_b, heads, in_channels_b)),
-					       shared_map=shared_map, kernel_size=kernel_size_b, stride=sp, padding='same'),
-					proj=Column(MultiHeadResBlock(out_channels_b, heads,
-						conv=MultiHeadConv3d(out_channels_b, out_channels_b, heads, out_channels_b, shared_map=shared_map,
-							   kernel_size=res_kernel_size_b, stride=1, padding='same'),
 						act=act, norm=norm, order='CANCANS'), depth=depth, recurrent=False),
 		            act=act, norm=norm, order='CANPN')
 
@@ -361,15 +292,9 @@ class SChiStage(nn.Module):
 						act=act, norm=norm, order='CANCANS'), depth=depth, recurrent=False),
 		            act=act, norm=norm, order='CANPN')
 
-		self.pw2_b = CBlock(in_channels_b, out_channels_b, heads,
-					conv=MultiHeadConv3d(*((in_channels_b*heads, out_channels_b*heads, 1, in_channels_b*heads) if fullconv else (in_channels_b, out_channels_b, heads, in_channels_b)),
-					       shared_map=shared_map, kernel_size=kernel_size_b, stride=sp, padding='same'),
-					proj=Column(MultiHeadResBlock(out_channels_b, heads,
-						conv=MultiHeadConv3d(out_channels_b, out_channels_b, heads, out_channels_b, shared_map=shared_map,
-							   kernel_size=res_kernel_size_b, stride=1, padding='same'),
-						act=act, norm=norm, order='CANCANS'), depth=depth, recurrent=False),
-		            act=act, norm=norm, order='CANPN')
-		
+		self.p1 = nn.Parameter(torch.empty([]), requires_grad=True)
+		self.p2 = nn.Parameter(torch.empty([]), requires_grad=True)
+
 		# Disable chi block
 		#self.x_dim = None
 
@@ -381,7 +306,13 @@ class SChiStage(nn.Module):
 			if not self.training: self.chi.eval()
 
 		y1, q1, y2, q2 = self.chi(x1, p1, x2, p2) if self.x_dim is not None else (x1, p1, x2, p2)
-		return self.pw1_a(y1), self.pw1_b(q1), self.pw2_a(y2), self.pw2_b(q2)
+		y1, y2 = self.pw1_a(y1), self.pw2_a(y2)
+		p_shape = [1 if i > 0 and dim2xdim[i + 1] not in [strxdim2xdim[d] for d in self.x_dim] else min(s1, s2) for i, (s1, s2) in enumerate(zip(y1.shape[1:], y2.shape[1:]))]
+		if self.p1.ndim == 0:
+			self.p1 = nn.Parameter(nn.init.xavier_normal_(torch.empty(p_shape)), requires_grad=True)
+		if self.p2.ndim == 0:
+			self.p2 = nn.Parameter(nn.init.xavier_normal_(torch.empty(p_shape)), requires_grad=True)
+		return y1, self.p1.unsqueeze(0).expand([y1.shape[0], *self.p1.shape]), y2, self.p2.unsqueeze(0).expand([y2.shape[0], *self.p2.shape])
 
 	def set_debug_mode(self, mode=False):
 		self.debug = mode
@@ -550,7 +481,7 @@ def test_schinet():
 		num_params += p.numel()
 	print("Total params: {:.2f}M".format(num_params/1000000))
 
-	allocated, reserved = torch.cuda.memory_allocated('cuda:0')/1024/1024, torch.cuda.max_memory_allocated('cuda:0')/1024/1024
+	allocated, reserved = torch.cuda.memory_allocated('cuda:0') / 1024 / 1024, torch.cuda.max_memory_allocated('cuda:0') / 1024 / 1024
 	print("Total memory (MB): {} (allocated) {} (reserved)".format(allocated, reserved))
 
 	x = torch.randn(5, 3, defaults['clip_len'], defaults['input_size'], defaults['input_size'], device='cuda:0')

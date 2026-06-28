@@ -30,6 +30,7 @@ class ChiStream(nn.Module):
 		self.norm = norm
 		self.headwise_map = headwise_map
 		self.alternate_attn = alternate_attn
+		self.ndims = len(self.pw1_shape) + 2
 
 		self.headsize1 = self.pw1_shape[-1]
 		self.headsize2 = self.pw2_shape[-1]
@@ -58,21 +59,21 @@ class ChiStream(nn.Module):
 		self.norm2_1 = norm(c1 if self.pw2_mixes_channels else c2)
 
 		# Attention stage 2 QKV mappings
-		self.Q1_2 = nn.Conv1d((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1)
+		self.Q1_2 = nn.Conv1d(c1 if self.pw2_mixes_channels else c2, c1 if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear(c1 if self.pw2_mixes_channels else c2, c1 if self.pw2_mixes_channels else c2)
 		self.K1_2 = nn.Conv1d((2 * c2) if self.pw1_mixes_channels else c1, (2 * c2) if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear((2 * c2) if self.pw1_mixes_channels else c1, (2 * c2) if self.pw1_mixes_channels else c1)
-		self.V1_2 = nn.Conv1d((2 * c2) if self.pw1_mixes_channels else c1, (2 * c2) if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear((2 * c2) if self.pw1_mixes_channels else c1, (2 * c2) if self.pw1_mixes_channels else c1)
-		self.Q2_2 = nn.Conv1d((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2)
+		self.V1_2 = nn.Conv1d(c2 if self.pw1_mixes_channels else c1, c2 if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear(c2 if self.pw1_mixes_channels else c1, c2 if self.pw1_mixes_channels else c1)
+		self.Q2_2 = nn.Conv1d(c2 if self.pw1_mixes_channels else c1, c2 if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear(c2 if self.pw1_mixes_channels else c1, c2 if self.pw1_mixes_channels else c1)
 		self.K2_2 = nn.Conv1d((2 * c1) if self.pw2_mixes_channels else c2, (2 * c1) if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear((2 * c1) if self.pw2_mixes_channels else c2, (2 * c1) if self.pw2_mixes_channels else c2)
-		self.V2_2 = nn.Conv1d((2 * c1) if self.pw2_mixes_channels else c2, (2 * c1) if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear((2 * c1) if self.pw2_mixes_channels else c2, (2 * c1) if self.pw2_mixes_channels else c2)
+		self.V2_2 = nn.Conv1d(c1 if self.pw2_mixes_channels else c2, c1 if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear(c1 if self.pw2_mixes_channels else c2, c1 if self.pw2_mixes_channels else c2)
 		self.norm1_2 = norm((c1 + c2) if self.pw1_mixes_channels else c1)
 		self.norm2_2 = norm((c1 + c2) if self.pw2_mixes_channels else c2)
 
 		# Attention stage 3 QKV mappings
-		self.Q1_3 = nn.Conv1d((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1)
-		self.K1_3 = nn.Conv1d((c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), (c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), (c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1))
+		#self.Q1_3 = nn.Conv1d((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw1_mixes_channels else c1, (c1 + c2) if self.pw1_mixes_channels else c1)
+		#self.K1_3 = nn.Conv1d((c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), (c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), (c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1))
 		self.V1_3 = nn.Conv1d((c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), (c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1), (c1 + c2) if self.pw1_mixes_channels else ((2 * c1) if self.pw2_mixes_channels else c1))
-		self.Q2_3 = nn.Conv1d((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2)
-		self.K2_3 = nn.Conv1d((c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), (c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), (c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2))
+		#self.Q2_3 = nn.Conv1d((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2, 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw2_mixes_channels else c2, (c1 + c2) if self.pw2_mixes_channels else c2)
+		#self.K2_3 = nn.Conv1d((c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), (c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), (c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2))
 		self.V2_3 = nn.Conv1d((c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), (c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), 1, groups=self.heads) if self.headwise_map else nn.Linear((c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2), (c1 + c2) if self.pw2_mixes_channels else ((2 * c2) if self.pw1_mixes_channels else c2))
 		self.norm1_3 = norm((c1 + c2) if self.pw1_mixes_channels else c1)
 		self.norm2_3 = norm((c1 + c2) if self.pw2_mixes_channels else c2)
@@ -92,17 +93,26 @@ class ChiStream(nn.Module):
 			y = M(x)
 		return restore_heads_and_channels(y, C)
 
-	def qkv_aggregate(self, q, k, v, dim=-2):
-		q, k, v = q.transpose(dim, -2), k.transpose(dim, -2), v.transpose(dim, -2)
-		q, k, v = q.mean(dim=-3, keepdim=True), k.mean(dim=-3, keepdim=True), v
-		n = v.shape[-3]
-		#v = v.transpose(-3, -2).reshape(v.shape[0], v.shape[1], 1, v.shape[-2], -1)
-		agg = qkv_aggregate(q, k, v)
-		#agg = agg.reshape(agg.shape[0], agg.shape[1], agg.shape[-2], n, -1).transpose(-3, -2)
+	def is_channel_dimension(self, dim):
+		return (dim + 1) % self.ndims == 0
 
-		#agg = qkv_aggregate(q, k, v)
+	def squeeze(self, x, dim=None):
+		if dim is None: dim = [d for d in [2, 3, 4] if d not in [self.x_dim[0], self.x_dim[1]]][0]
+		return x.mean(dim=dim, keepdim=True)
 
-		return agg.transpose(dim, -2)
+	def attn(self, a, b, dim=-1, alt=-2):
+		scale = a.shape[dim] ** -0.5
+		return self.mix(self.squeeze(a)/scale, self.squeeze(b)/scale, dim=dim, alt=alt)
+
+	def mix(self, a, b, dim=-1, alt=-2):
+		if self.is_channel_dimension(alt):
+			return a.transpose(dim, -1).transpose(dim, -2).matmul(b.transpose(dim, -1).transpose(dim, -2).transpose(-1, -2)).transpose(dim, -2).transpose(dim, -1)
+		return a.transpose(dim, -1).transpose(alt, -2).matmul(b.transpose(dim, -1).transpose(alt, -2).transpose(-1, -2)).transpose(alt, -2).transpose(dim, -1)
+
+	def strain(self, a, dim=-1):
+		#res = stable_softmax(a, dim=dim)
+		res = a.softmax(dim=dim)
+		return res
 
 	def chi(self, x1, p1, x2, p2):
 		# x1 --> Nc
@@ -114,35 +124,30 @@ class ChiStream(nn.Module):
 		x1 = torch.cat([ x1, p1.expand([s if i not in [2, 3]  or i in self.x_dim else x1.shape[i] for i, s in enumerate(p1.shape)]) ], dim=self.x_dim[0])
 		x2 = torch.cat([ x2, p2.expand([s if i not in [2, 3]  or i in self.x_dim else x2.shape[i] for i, s in enumerate(p2.shape)]) ], dim=self.x_dim[1])
 
-		# Attention stage 1: Compress along high-res pathway
-		x1_hat = self.map(self.norm1_1, self.qkv_aggregate(self.map(self.Q1_1, p1), self.map(self.K1_1, x1), self.map(self.V1_1, x1), dim=self.x_dim[0]))
-		x2_hat = self.map(self.norm2_1, self.qkv_aggregate(self.map(self.Q2_1, p2).transpose(self.x_dim[0], self.x_dim[1]), self.map(self.K2_1, x2).transpose(self.x_dim[0], self.x_dim[1]), self.map(self.V2_1, x2).transpose(self.x_dim[0], self.x_dim[1]), dim=self.x_dim[0]).transpose(self.x_dim[0], self.x_dim[1]))
+		# Stage 1: Compute reduced attention maps
+		x1_hat = self.attn(self.map(self.Q1_1, p1), self.map(self.K1_1, x1), dim=self.x_dim[1], alt=self.x_dim[0]).transpose(self.x_dim[0], self.x_dim[1])
+		x2_hat = self.attn(self.map(self.Q2_1, p2), self.map(self.K2_1, x2), dim=self.x_dim[0], alt=self.x_dim[1]).transpose(self.x_dim[0], self.x_dim[1])
 
-		# Chiasm
-		x12_hat, x21_hat = torch.cat([x1_hat, x2_hat], dim=self.x_dim[0]), torch.cat([x2_hat, x1_hat], dim=self.x_dim[1])
+		# Stage 2: Compute new probes
+		x12_hat = self.map(self.norm1_1, self.mix(self.strain(x1_hat, dim=self.x_dim[0]), self.map(self.V1_1, x1), dim=self.x_dim[0], alt=self.x_dim[1]).transpose(self.x_dim[0], self.x_dim[1]))
+		x21_hat = self.map(self.norm2_1, self.mix(self.strain(x2_hat, dim=self.x_dim[1]), self.map(self.V2_1, x2), dim=self.x_dim[1], alt=self.x_dim[0]).transpose(self.x_dim[0], self.x_dim[1]))
 
-		# Optional: Cat with uncompressed tensors and compress along alternate high-res pathway
-		#x12 = torch.cat([x1, x12_hat], dim=-2)
-		#x21 = torch.cat([x2, x21_hat], dim=-1)
-		#x12_hat = self.qkv_aggregate(p1, x12, x12)
-		#x21_hat = self.qkv_aggregate(p2.transpose(-2, -1), x21.transpose(-2, -1), x21.transpose(-2, -1)).transpose(-2, -1)
-		#x12_hat, x21_hat = torch.cat([x12_hat, x21_hat], dim=self.x_dim[0]), torch.cat([x21_hat, x12_hat], dim=self.x_dim[1])
-
-		# Attention stage 2: Extend along alternate high-res pathway
-		x12 = self.map(self.norm1_2, self.qkv_aggregate(self.map(self.Q1_2, x1), self.map(self.K1_2, x12_hat), self.map(self.V1_2, x12_hat), dim=self.x_dim[0]))
-		x21 = self.map(self.norm2_2, self.qkv_aggregate(self.map(self.Q2_2, x2).transpose(self.x_dim[0], self.x_dim[1]), self.map(self.K2_2, x21_hat).transpose(self.x_dim[0], self.x_dim[1]), self.map(self.V2_2, x21_hat).transpose(self.x_dim[0], self.x_dim[1]), dim=self.x_dim[0]).transpose(self.x_dim[0], self.x_dim[1]))
+		# Stage 3: Combine with alternate pathways (chiasm)
+		x21 = self.map(self.norm1_2, self.mix(self.strain(x1_hat, dim=self.x_dim[1]), self.map(self.V1_2, x21_hat).transpose(self.x_dim[0], self.x_dim[1]), dim=self.x_dim[1], alt=self.x_dim[0]))
+		x12 = self.map(self.norm2_2, self.mix(self.strain(x2_hat, dim=self.x_dim[0]), self.map(self.V2_2, x12_hat).transpose(self.x_dim[0], self.x_dim[1]), dim=self.x_dim[0], alt=self.x_dim[1]))
 		#x12 = x12.expand([s if i not in [2, 3] or i in self.x_dim else x1.shape[i] for i, s in enumerate(x12.shape)])
 		#x21 = x21.expand([s if i not in [2, 3] or i in self.x_dim else x2.shape[i] for i, s in enumerate(x21.shape)])
 
-		y1, y2 = x12, x21
+		y1, y2 = x21, x12
 		if self.alternate_attn:
 			# Cat along alternate low-res pathway
-			x12 = torch.cat([x1, x12], dim=self.x_dim[1])
-			x21 = torch.cat([x2, x21], dim=self.x_dim[0])
+			x21, x12 = torch.cat([x1, x21], dim=self.x_dim[1]), torch.cat([x2, x12], dim=self.x_dim[0])
 
-			# Attention stage 3: Aggregate along alternate low-res pathway
-			y1 = self.map(self.norm1_3, self.qkv_aggregate(self.map(self.Q1_3, x1).transpose(self.x_dim[0], self.x_dim[1]), self.map(self.K1_3, x12).transpose(self.x_dim[0], self.x_dim[1]), self.map(self.V1_3, x12).transpose(self.x_dim[0], self.x_dim[1]), dim=self.x_dim[0]).transpose(self.x_dim[0], self.x_dim[1]))
-			y2 = self.map(self.norm2_3, self.qkv_aggregate(self.map(self.Q2_3, x2), self.map(self.K2_3, x21), self.map(self.V2_3, x21), dim=self.x_dim[0]))
+			# Stage 4: Aggregate along alternate low-res pathway
+			x21_star = self.attn(self.map(self.K2_2, torch.cat([x21_hat, x12_hat], dim=self.x_dim[1])), self.map(self.Q2_2, x21_hat), dim=self.x_dim[0], alt=self.x_dim[1])
+			x12_star = self.attn(self.map(self.K1_2, torch.cat([x12_hat, x21_hat], dim=self.x_dim[0])), self.map(self.Q1_2, x12_hat), dim=self.x_dim[1], alt=self.x_dim[0])
+			y1 = self.map(self.norm1_3, self.mix(self.strain(x21_star, dim=self.x_dim[1]), self.map(self.V1_3, x21), dim=self.x_dim[1], alt=self.x_dim[0]).transpose(self.x_dim[0], self.x_dim[1]))
+			y2 = self.map(self.norm2_3, self.mix(self.strain(x12_star, dim=self.x_dim[0]), self.map(self.V2_3, x12), dim=self.x_dim[0], alt=self.x_dim[1]).transpose(self.x_dim[0], self.x_dim[1]))
 
 		# Final outputs
 		y1 = x1 + y1
@@ -526,11 +531,11 @@ class SChiNet(nn.Module):
 
 
 def test_schinet():
-	#channels1, channels2 = 64, 64
-	channels1, channels2 = 8, 64
+	channels1, channels2 = 64, 64
+	#channels1, channels2 = 8, 64
 	#channels1, channels2 = 8, 64
 	#channels1, channels2 = 64, 64
-	defaults = {'clip_len': 32, 'input_size': 56, 'chi_stages': ((channels1, channels2, 4, 2), (channels1, channels2, 4, 2), (channels1, channels2, 8, 2), (channels1, channels2, 8, 2)), 'fmap_size': (3, 3), 'head_regroup_post': False, 'chi_norm': 'models.SChiNet.TokenBatchNorm',}
+	defaults = {'clip_len': 32, 'input_size': 56, 'chi_stages': ((channels1, channels2, 4, 2), (channels1, channels2, 4, 2), (channels1, channels2, 8, 2), (channels1, channels2, 8, 2)), 'fmap_size': (3, 3), 'head_regroup_post': False, 'alternate_attn': True, 'chi_norm': 'models.SChiNet.TokenBatchNorm',}
 	#defaults = {'clip_len': 32, 'input_size': 56, 'chi_stages': ((channels1, channels2, 2, 2), (channels1, channels2, 4, 2), (channels1, channels2, 8, 2)), 'fmap_size': (3, 3), 'head_regroup_post': True}
 	config1 = {**defaults, 'enc_kernel_sizes': ((8, 7, 7), (3, 7, 7)), 'enc_strides': ((8, 2, 2), (2, 4, 4)), 'enc_channels': (channels1, channels2), 'token_dim': (2, 3, 4), 'x_dim': ('s', 't')}
 	config2 = {**defaults, 'enc_kernel_sizes': ((3, 7, 7), (8, 7, 7)), 'enc_strides': ((2, 2, 2), (8, 2, 2)), 'enc_channels': (channels1, channels2), 'token_dim': (2, 3, 4), 'x_dim': ('t', 'c')}
@@ -538,7 +543,7 @@ def test_schinet():
 	config4 = {**defaults, 'enc_kernel_sizes': ((8, 7, 7), (3, 7, 7)), 'enc_strides': ((8, 2, 2), (2, 4, 4)), 'enc_channels': (channels1, channels2), 'token_dim': (2, 3, 4), 'x_dim': None}
 
 
-	config = config2
+	config = config1
 	model = SChiNet(config, 101)
 	model.set_debug_mode(True)
 
@@ -550,13 +555,9 @@ def test_schinet():
 		num_params += p.numel()
 	print("Total params: {:.2f}M".format(num_params/1000000))
 
-	allocated, reserved = torch.cuda.memory_allocated('cuda:0')/1024/1024, torch.cuda.max_memory_allocated('cuda:0')/1024/1024
-	print("Total memory (MB): {} (allocated) {} (reserved)".format(allocated, reserved))
-
 	x = torch.randn(5, 3, defaults['clip_len'], defaults['input_size'], defaults['input_size'], device='cuda:0')
 
 	y = model(x)
-	allocated, reserved = torch.cuda.memory_allocated('cuda:0') / 1024 / 1024, torch.cuda.max_memory_allocated('cuda:0') / 1024 / 1024
-	print("Total memory (MB): {} (allocated) {} (reserved)".format(allocated, reserved))
+
 	print(y.shape)
 
